@@ -69,7 +69,7 @@ def register(manager: SkillManager) -> None:
     def write_file(path: str, content: str) -> str:
         try:
             Path(path).write_text(content, encoding="utf-8")
-            return f"✅ 写入成功: {path}"
+            return f"[OK] 写入成功: {path}"
         except Exception as e:
             return f"写入失败: {e}"
 
@@ -94,3 +94,28 @@ def register(manager: SkillManager) -> None:
             prefix = "📁" if item.is_dir() else "📄"
             lines.append(f"{prefix} {item.name}")
         return "\n".join(lines) if lines else "（空目录）"
+
+    @manager.skill(
+        name="update_user_profile",
+        description="即时更新用户的长期档案与核心设定（客观实事与主观偏好）。当你得知了重要事实、偏好、习惯或约束限制时，不要等当天结束，而是立刻使用此工具让其生效。",
+        parameters={
+            "properties": {
+                "layer": {"type": "string", "enum": ["objective", "subjective"], "description": "记忆分层。客观事实如名字/地点选objective；主观偏好/约束规则选subjective。"},
+                "key": {"type": "string", "description": "属性键名（如：喜爱颜色，文件写入规范，语言偏好）"},
+                "value": {"type": "string", "description": "偏好或属性的具体内容"}
+            },
+            "required": ["layer", "key", "value"],
+        },
+        category="system",
+    )
+    def update_user_profile(layer: str, key: str, value: str) -> str:
+        try:
+            from core.user_profile import UserProfileManager
+            upm = UserProfileManager(data_dir="data")
+            if layer == "subjective":
+                upm.update_subjective(key, value)
+            else:
+                upm.update_objective(key, value)
+            return f"[OK] 核心档案更新成功！[{layer}] {key}: {value}"
+        except Exception as e:
+            return f"档案更新失败: {e}"

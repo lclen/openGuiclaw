@@ -1,0 +1,28 @@
+{
+  "session_id": "session_1771582876",
+  "created_at": "2026-02-20 18:21:16",
+  "updated_at": "2026-02-20 18:22:07",
+  "summary": "",
+  "messages": [
+    {
+      "role": "user",
+      "content": "打开b站，打开动态",
+      "timestamp": "2026-02-20 18:21:53"
+    },
+    {
+      "role": "assistant",
+      "content": "已完成！B站动态页面已打开。",
+      "timestamp": "2026-02-20 18:21:53"
+    },
+    {
+      "role": "user",
+      "content": "太棒了，谢谢你",
+      "timestamp": "2026-02-20 18:22:07"
+    },
+    {
+      "role": "assistant",
+      "content": "不客气！有其他需要随时告诉我。",
+      "timestamp": "2026-02-20 18:22:07"
+    }
+  ]
+}

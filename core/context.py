@@ -79,6 +79,7 @@ class ContextManager:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._last_status: str = "unknown"
+        self._last_summary: str = ""
         self._last_proactive_at: float = 0.0
         self._enabled: bool = True
 
@@ -121,7 +122,7 @@ class ContextManager:
                 try:
                     self._tick()
                 except Exception as e:
-                    print(f"[Context] ⚠️ 感知循环出错: {e}")
+                    print(f"[Context] [WARN] 感知循环出错: {e}")
             self._stop_event.wait(self.interval)
 
     def _tick(self) -> None:
@@ -166,10 +167,28 @@ class ContextManager:
 
         # MODE_NORMAL: 完全沿用模型自身判断（needs_interaction 不修改）
 
+        # ── 日志去重逻辑 (Deduplication) ─────────────────────────
+        is_duplicate = False
+        if self._last_summary and self._last_status == status:
+            import re
+            def _tokens(text: str):
+                return set(re.split(r'[\s，。：、（）【】「」\.\-]+', text.lower()))
+            t1, t2 = _tokens(self._last_summary), _tokens(summary)
+            union = t1 | t2
+            if union:
+                sim = len(t1 & t2) / len(union)
+                if sim >= 0.55:  # >= 55% 词级别重合度才算同一行为延续
+                    is_duplicate = True
+
         # Log to journal
-        if summary:
+        if summary and not is_duplicate:
             log_entry = f"**[视觉日志]** 状态: `{status}` — {summary}"
             self.journal.append(log_entry)
+            self._last_summary = summary
+        elif summary and is_duplicate:
+            self.journal.update_last_time()
+            if self.verbose:
+                print(f"[Context] 💤 状态未发生显著变化（延续 {status}），已自动更新记录的时长。")
 
         # Proactive interaction decision
         if needs_interaction and suggested_message:
@@ -196,7 +215,7 @@ class ContextManager:
             return base64.b64encode(buf.getvalue()).decode("utf-8")
 
         except ImportError:
-            print("[Context] ⚠️ 缺少依赖: pip install pyautogui pillow")
+            print("[Context] [WARN] 缺少依赖: pip install pyautogui pillow")
             return None
         except Exception as e:
             print(f"[Context] 截屏失败: {e}")

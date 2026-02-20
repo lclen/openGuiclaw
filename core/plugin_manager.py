@@ -103,7 +103,7 @@ class PluginManager:
         stem = filename.removesuffix(".py")
         path = self.plugins_dir / f"{stem}.py"
         if not path.exists():
-            print(f"[Plugin] ❌ 找不到插件文件: {path}")
+            print(f"[Plugin] [ERR] 找不到插件文件: {path}")
             return None
         return self._load_plugin(path)
 
@@ -115,7 +115,7 @@ class PluginManager:
         """
         info = self._plugins.get(name)
         if not info:
-            print(f"[Plugin] ⚠️ 未找到已加载的插件 '{name}'，尝试首次加载...")
+            print(f"[Plugin] [WARN] 未找到已加载的插件 '{name}'，尝试首次加载...")
             result = self.load(name)
             return result is not None
 
@@ -123,7 +123,7 @@ class PluginManager:
         self._unload_plugin(name)
         result = self._load_plugin(path)
         if result:
-            print(f"[Plugin] 🔄 插件 '{name}' 已热更新。")
+            print(f"[Plugin] [RELOAD] 插件 '{name}' 已热更新。")
             return True
         return False
 
@@ -139,10 +139,10 @@ class PluginManager:
     def unload(self, name: str) -> bool:
         """Unload a plugin (removes its skills? No — skills stay until restart)."""
         if name not in self._plugins:
-            print(f"[Plugin] ⚠️ 插件 '{name}' 未加载。")
+            print(f"[Plugin] [WARN] 插件 '{name}' 未加载。")
             return False
         self._unload_plugin(name)
-        print(f"[Plugin] 🗑 插件 '{name}' 已卸载（已注册的技能将在重启后失效）。")
+        print(f"[Plugin] [DEL] 插件 '{name}' 已卸载（已注册的技能将在重启后失效）。")
         return True
 
     def list_plugins(self) -> List[PluginInfo]:
@@ -155,7 +155,7 @@ class PluginManager:
             return "（没有已加载的插件）"
         lines = []
         for info in self._plugins.values():
-            status = "✅" if info.enabled else "❌"
+            status = "[OK]" if info.enabled else "[ERR]"
             lines.append(
                 f"  {status} [{info.name}] {info.display_name} v{info.version}"
                 f" — {info.description}"
@@ -181,7 +181,7 @@ class PluginManager:
 
             # Must expose a register() function
             if not hasattr(module, "register"):
-                print(f"[Plugin] ⚠️ '{stem}.py' 缺少 register(manager) 函数，跳过。")
+                print(f"[Plugin] [WARN] '{stem}.py' 缺少 register(manager) 函数，跳过。")
                 del sys.modules[module_name]
                 return None
 
@@ -190,11 +190,11 @@ class PluginManager:
 
             info = PluginInfo(stem, path, module)
             self._plugins[stem] = info
-            print(f"  🔌 插件加载: {info.display_name} v{info.version} ({stem}.py)")
+            print(f"  [OK] 插件加载: {info.display_name} v{info.version} ({stem}.py)")
             return stem
 
         except Exception as e:
-            print(f"[Plugin] ❌ 加载 '{stem}.py' 失败: {e}")
+            print(f"[Plugin] [ERR] 加载 '{stem}.py' 失败: {e}")
             return None
 
     def _unload_plugin(self, name: str) -> None:

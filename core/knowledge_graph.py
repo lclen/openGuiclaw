@@ -97,12 +97,17 @@ class KnowledgeGraph:
         return count
 
     def query(self, entity: str) -> List[Triple]:
-        """Find all triples where entity is the subject OR the object."""
+        """Find all triples where entity is the subject OR the object.
+        Uses space-normalized matching so 'Qwen3.5' can match 'Qwen 3.5'.
+        """
         entity_lower = entity.lower()
-        return [
-            t for t in self._triples
-            if entity_lower in t.subject.lower() or entity_lower in t.object.lower()
-        ]
+        entity_nospace = entity_lower.replace(" ", "")
+
+        def _matches(field: str) -> bool:
+            fl = field.lower()
+            return entity_lower in fl or entity_nospace in fl.replace(" ", "")
+
+        return [t for t in self._triples if _matches(t.subject) or _matches(t.object)]
 
     def query_between(self, entity_a: str, entity_b: str) -> List[Triple]:
         """Find triples connecting entity_a and entity_b."""

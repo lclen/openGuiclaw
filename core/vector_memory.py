@@ -95,11 +95,11 @@ def _cosine_similarity(a: List[float], b: List[float]) -> float:
 class VectorStore:
     """
     Persists embedding vectors. Supports multiple vectors (chunks) per ID.
-    Storage format: data/memory_vectors.jsonl
+    Storage format: data/scene_memory_vectors.jsonl
     """
 
     def __init__(self, data_dir: str = "data"):
-        self.vector_file = Path(data_dir) / "memory_vectors.jsonl"
+        self.vector_file = Path(data_dir) / "scene_memory_vectors.jsonl"
         self._store: List[Tuple[str, List[float]]] = []  # List of (id, vector)
         self._load()
 
@@ -141,6 +141,7 @@ class VectorStore:
         query_vector: List[float],
         top_k: int = 5,
         candidate_ids: Optional[List[str]] = None,
+        threshold: float = 0.4,
     ) -> List[Tuple[str, float]]:
         """
         Similarity search with aggregation.
@@ -158,8 +159,9 @@ class VectorStore:
             if mem_id not in best_scores or score > best_scores[mem_id]:
                 best_scores[mem_id] = score
 
-        # Sort aggregated results
-        sorted_results = sorted(best_scores.items(), key=lambda x: x[1], reverse=True)
+        # Filter by threshold and sort aggregated results
+        filtered = [(mid, score) for mid, score in best_scores.items() if score >= threshold]
+        sorted_results = sorted(filtered, key=lambda x: x[1], reverse=True)
         return sorted_results[:top_k]
 
     def remove(self, mem_id: str) -> None:

@@ -1,0 +1,18 @@
+{
+  "session_id": "session_1771577344",
+  "created_at": "2026-02-20 16:49:04",
+  "updated_at": "2026-02-20 16:50:25",
+  "summary": "",
+  "messages": [
+    {
+      "role": "user",
+      "content": "查看今日热点有哪些，给我总结成一个文章。使用plan",
+      "timestamp": "2026-02-20 16:50:25"
+    },
+    {
+      "role": "assistant",
+      "content": "（已完成工具操作，无额外回复。）",
+      "timestamp": "2026-02-20 16:50:25"
+    }
+  ]
+}

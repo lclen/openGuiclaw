@@ -17,6 +17,7 @@ from core.agent import Agent
 from core.context import ContextManager, MODE_SILENT, MODE_NORMAL, MODE_LIVELY
 from core.plugin_manager import PluginManager
 import queue
+from openai import OpenAI
 
 
 BANNER = """
@@ -36,9 +37,28 @@ HELP_TEXT = """
   /plugins reload   重载所有插件
   /plugins reload [name]  重载指定插件
   /mode             切换主动密度模式（静默/正常/活泼）
+  /plan             切换计划执行模式（自驾/确认/普通）
   /context          查看视觉感知状态
+  /persona          列出所有可用性格 (Identities)
+  /persona <name>   切换主动 AI 性格
   /quit  /exit      退出
 """
+
+# 计划执行模式全局变量
+# autopilot: AI 连续自主执行，不在步骤间询问用户
+# confirm: AI 每步做完后停下来等用户确认继续
+# normal: 不做强制约束，AI 自行决定（默认）
+PLAN_MODE_AUTOPILOT = "autopilot"
+PLAN_MODE_CONFIRM   = "confirm"
+PLAN_MODE_NORMAL    = "normal"
+
+_plan_mode = PLAN_MODE_NORMAL  # 当前选中的模式
+
+
+def get_plan_mode() -> str:
+    """供 agent.py 动态读取当前计划执行模式。"""
+    return _plan_mode
+
 
 
 def main():
@@ -50,7 +70,7 @@ def main():
 
     # Initialize agent
     agent = Agent(
-        config_path="data/config.json",
+        config_path="config.json",
         persona_path="PERSONA.md",
         data_dir="data",
     )
@@ -59,25 +79,25 @@ def main():
     if load_basic:
         from skills import basic
         agent.register_skill_module(basic)
-        print("  ✅ 技能加载: basic (get_time, read_file, write_file, list_dir, ...)")
+        print("  [OK] 技能加载: basic (get_time, read_file, write_file, list_dir, ...)")
 
     if load_autogui:
         try:
             from skills import autogui
             agent.register_skill_module(autogui)
-            print("  ✅ 技能加载: autogui (autogui_action, get_screenshot)")
+            print("  [OK] 技能加载: autogui (autogui_action, get_screenshot)")
         except ImportError as e:
-            print(f"  ⚠️  AutoGUI 加载失败（缺少依赖？{e}），已跳过。")
+            print(f"  [WARN] AutoGUI 加载失败（缺少依赖？{e}），已跳过。")
 
     # Load web fetch skill (web_fetch tool + Qwen built-in search)
     try:
         from skills import web_search
         agent.register_skill_module(web_search)
-        print("  ✅ 技能加载: web_search (web_fetch) + 内置联网搜索已开启")
+        print("  [OK] 技能加载: web_search (web_fetch) + 内置联网搜索已开启")
     except ImportError as e:
-        print(f"  ⚠️  Web 技能加载失败（{e}），已跳过。")
+        print(f"  [WARN] Web 技能加载失败（{e}），已跳过。")
 
-    print(f"\n  Persona: {agent.config.get('persona_name', 'AI 助理')}")
+    print(f"\n  Persona: {agent.active_persona_name} ({agent.config.get('persona_name', 'AI 助理')})")
     print(f"  Model  : {agent.model}")
     print(f"  Session: {agent.sessions.current.session_id}\n")
 
@@ -88,9 +108,21 @@ def main():
         print("  （plugins/ 目录没有插件）")
 
     # Initialize and Start Vision Context
+    vision_cfg = agent.config.get("vision", {})
+    if vision_cfg and vision_cfg.get("api_key"):
+        vision_client = OpenAI(
+            base_url=vision_cfg.get("base_url"),
+            api_key=vision_cfg.get("api_key")
+        )
+        vision_model = vision_cfg.get("model", "qwen-vl-plus")
+        print(f"  [OK] 专属视觉模型已加载: {vision_model}")
+    else:
+        vision_client = agent.client
+        vision_model = "qwen-vl-plus"
+
     context = ContextManager(
-        client=agent.client,
-        vision_model="qwen-vl-plus", # Ensure this supports Vision
+        client=vision_client,
+        vision_model=vision_model,
         journal=agent.journal,
         interval_seconds=300, # 5 min
     )
@@ -215,9 +247,48 @@ def main():
             state = "✅ 已开启" if context.verbose else "❌ 已关闭"
             print(f"  截屏日志 {state}。\n")
             continue
+        elif cmd.startswith("/persona"):
+            parts = user_input.split(maxsplit=1)
+            if len(parts) == 1:
+                # List personas
+                personas = agent.list_personas()
+                print("\n【可用性格 (Identities)】")
+                for p in personas:
+                    marker = " ◀ 当前激活" if p == agent.active_persona_name else ""
+                    print(f"  - {p}{marker}")
+                print()
+            else:
+                # Switch persona
+                new_name = parts[1].strip()
+                if agent.switch_persona(new_name):
+                    print(f"  ✅ 人设已成功切换为: {new_name}\n")
+                else:
+                    print(f"  ❌ 找不到性格文件: data/identities/{new_name}.md\n")
+            continue
+        elif cmd == "/plan":
+            global _plan_mode
+            _plan_labels = {
+                PLAN_MODE_AUTOPILOT: ("[1] 自驾模式 (Autopilot)", "AI 连续自主执行全部步骤，完成后统一汇报"),
+                PLAN_MODE_CONFIRM:   ("[2] 确认模式 (Confirm)",   "AI 每完成一步后暂停，等待你输入 [继续] 或 [取消]"),
+                PLAN_MODE_NORMAL:    ("[3] 普通模式 (Normal)",    "不做强制约束，AI 随机应变（默认）"),
+            }
+            print(f"\n「计划执行模式」—— 当前: {_plan_labels[_plan_mode][0]}")
+            print()
+            for m, (label, desc) in _plan_labels.items():
+                marker = " ◀ 当前" if m == _plan_mode else ""
+                print(f"  {label}  {desc}{marker}")
+            print()
+            choice = input("请输入选项 (1/2/3)，按 Enter 取消：").strip()
+            plan_map = {"1": PLAN_MODE_AUTOPILOT, "2": PLAN_MODE_CONFIRM, "3": PLAN_MODE_NORMAL}
+            if choice in plan_map:
+                _plan_mode = plan_map[choice]
+                names = {PLAN_MODE_AUTOPILOT: "自驾", PLAN_MODE_CONFIRM: "确认", PLAN_MODE_NORMAL: "普通"}
+                print(f"  已切换到 {names[_plan_mode]}模式。\n")
+            else:
+                print("  已取消。\n")
 
         # Normal chat
-        print("Agent > ", end="", flush=True)
+        print(f"{agent.active_persona_name.capitalize()} > ", end="", flush=True)
         response = agent.chat(user_input)
         print(response)
         print()

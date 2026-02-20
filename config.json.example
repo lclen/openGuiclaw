@@ -1,9 +1,10 @@
 {
   "api": {
     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "api_key": "你的API Key",
-    "model": "qwen3.5-plus",
-    "max_tokens": 8192,
+    "api_key": "YOUR_API_KEY_HERE",
+    "model": "qwen-max",
+    "evolution_model": "qwen-turbo",
+    "max_tokens": 4096,
     "temperature": 0.7
   },
   "screen": {
@@ -14,5 +15,10 @@
     "max_iterations": 20,
     "delay_between_actions": 1.0,
     "confidence_threshold": 0.7
+  },
+  "vision": {
+    "api_key": "YOUR_VISION_API_KEY",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "model": "qwen-vl-plus"
   }
 }

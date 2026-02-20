@@ -1,0 +1,18 @@
+{
+  "session_id": "session_1771582641",
+  "created_at": "2026-02-20 18:17:21",
+  "updated_at": "2026-02-20 18:18:03",
+  "summary": "",
+  "messages": [
+    {
+      "role": "user",
+      "content": "打开b站，打开动态",
+      "timestamp": "2026-02-20 18:18:03"
+    },
+    {
+      "role": "assistant",
+      "content": "已完成！B站动态页面已打开。\n\n**操作过程：**\n1. 点击任务栏打开浏览器\n2. 在地址栏输入 bilibili.com 并访问\n3. 等待页面加载后点击\"动态\"按钮\n4. 成功进入B站动态页面",
+      "timestamp": "2026-02-20 18:18:03"
+    }
+  ]
+}

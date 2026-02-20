@@ -20,12 +20,13 @@ from core.diary import DiaryManager
 from core.self_evolution import SelfEvolution
 from core.vector_memory import EmbeddingClient, VectorStore
 from core.knowledge_graph import KnowledgeGraph
+from core.user_profile import UserProfileManager
 import time
 import threading
 
 
 
-BUILTIN_SYSTEM_SUFFIX = """
+BUILTIN_SYSTEM_SUFFIX_BASE = """
 ---
 # 内置技能 (Always available)
 - **remember**: 将重要信息写入长期记忆。
@@ -38,6 +39,40 @@ BUILTIN_SYSTEM_SUFFIX = """
 - **内置联网搜索**: 当你需要查询实时信息（天气、新闻、股价等），可以直接搜索，无需调用额外工具。
 """
 
+_DISCIPLINE_AUTOPILOT = """
+---
+# 执行纪律：自驾模式 (Autopilot) [重要！！]
+- 当你正在执行一个由 `create_plan` 制定的计划时，**严格禁止**在每个步骤之间停下来向用户询问"是否继续"、"需要我进行下一步吗"等待确认的话语。必须自主连续执行直到计划所有步骤完成。
+- 只在以下情况才暂停并向用户报告：a) 某个步骤彻底失败且无法自行修复；b) 发现用户原始需求存在必须由用户澄清的歧义。
+- 所有步骤完成后，**必须调用 `complete_plan` 工具**进行总结并正式结案任务，结案后不再追问。
+"""
+
+_DISCIPLINE_CONFIRM = """
+---
+# 执行纪律：确认模式 (Confirm)
+- 每执行完一个计划步骤后，**必须暂停**，简短告知用户该步做了什么、结果如何，并明确询问："是否继续下一步？" 或写出下一步的描述等待确认。
+- 只有用户明确说"继续"或类似肯定回复后，才执行下一步。
+- 用户如果说"取消"或"停止"，立即停止并汇报当前计划进度。
+- 所有步骤完成后，**必须调用 `complete_plan` 工具**进行最终总结并结案。
+"""
+
+
+def _build_builtin_suffix() -> str:
+    """动态生成 system_prompt 的内置技能后缀，根据当前计划执行模式追加纪律规则。"""
+    try:
+        import __main__ as _main
+        mode = _main.get_plan_mode() if hasattr(_main, "get_plan_mode") else "normal"
+    except Exception:
+        mode = "normal"
+
+    if mode == "autopilot":
+        return BUILTIN_SYSTEM_SUFFIX_BASE + _DISCIPLINE_AUTOPILOT
+    elif mode == "confirm":
+        return BUILTIN_SYSTEM_SUFFIX_BASE + _DISCIPLINE_CONFIRM
+    else:
+        return BUILTIN_SYSTEM_SUFFIX_BASE
+
+
 
 class Agent:
     """
@@ -46,13 +81,16 @@ class Agent:
 
     def __init__(
         self,
-        config_path: str = "data/config.json",
+        config_path: str = "config.json",
         persona_path: str = "PERSONA.md",
         data_dir: str = "data",
+        auto_evolve: bool = True
     ):
+        self.config_path = config_path
         # Load config
         with open(config_path, "r", encoding="utf-8") as f:
             self.config = json.load(f)
+        self.auto_evolve = auto_evolve
 
         api_cfg = self.config["api"]
         self.client = OpenAI(
@@ -60,12 +98,35 @@ class Agent:
             api_key=api_cfg["api_key"],
         )
         self.model = api_cfg["model"]
+        # New Feature: cheaper model for evolution (default to main model if missing)
+        self.evolution_model = api_cfg.get("evolution_model", self.model)
+        
         self.max_tokens = api_cfg.get("max_tokens", 4096)
         self.temperature = api_cfg.get("temperature", 0.7)
 
         # Load persona
-        self.persona_path = persona_path
-        self.persona = self._load_persona(persona_path)
+        self.identities_dir = Path("data/identities")
+        self.identities_dir.mkdir(parents=True, exist_ok=True)
+        # Check if default.md exists, if not, copy from PERSONA.md if it exists
+        default_persona = self.identities_dir / "default.md"
+        if not default_persona.exists():
+            old_persona = Path(persona_path)
+            if old_persona.exists():
+                default_persona.write_text(old_persona.read_text(encoding="utf-8"), encoding="utf-8")
+            else:
+                default_persona.write_text("你是一个有帮助的 AI 助理。", encoding="utf-8")
+        
+        self.active_persona_name = self.config.get("active_persona", "default")
+        self.persona_path = str(self.identities_dir / f"{self.active_persona_name}.md")
+        if not Path(self.persona_path).exists():
+            self.persona_path = str(default_persona)
+            self.active_persona_name = "default"
+
+        self.persona = self._load_persona(self.persona_path)
+
+        # Load global interaction habits
+        self.habits_path = Path(data_dir) / "interaction_habits.md"
+        self._load_habits()
 
         # Vector memory (semantic search) — optional but enabled by default from config
         emb_cfg = self.config.get("embedding", {})
@@ -81,9 +142,9 @@ class Agent:
                     api_key=emb_key, base_url=emb_url, model=emb_model
                 )
                 self._vector_store = VectorStore(data_dir)
-                print(f"  ✅ 向量记忆已启用（{emb_model}）")
+                print(f"  [OK] 向量记忆已启用（{emb_model}）")
             except Exception as e:
-                print(f"  ⚠️  向量记忆初始化失败: {e}")
+                print(f"  [WARN] 向量记忆初始化失败: {e}")
 
         # Core modules
         self.memory = MemoryManager(
@@ -99,22 +160,28 @@ class Agent:
         # New Feature: Knowledge Graph
         self.kg = KnowledgeGraph(data_dir)
 
+        # New Feature: User Profile Manager
+        self.user_profile = UserProfileManager(data_dir)
+
         self.evolution = SelfEvolution(
-            self.client, self.model, self.memory, self.journal,
-            persona_path=persona_path,
+            self.client, self.evolution_model, self.memory, self.journal,
+            persona_path=self.persona_path,
             data_dir=data_dir,
             knowledge_graph=self.kg,
+            user_profile=self.user_profile,
         )
         # Hack: sync diary manager if needed, or let evolution use its own if designed that way.
-        # But we updated self_evolution.py to instantiate its own DiaryManager(data_dir).
         # Since they manipulate files, it's safe to have two instances pointing to same dir.
 
         # ContextManager (set by main.py after init)
         self.context = None  # type: Optional[Any]
 
-        # State for date-change detection
+        # Start built-in background tasks ONLY if auto_evolve is True
         self.last_interaction_date = time.strftime("%Y-%m-%d")
-
+        if self.auto_evolve:
+            # ── Startup: check if yesterday's journal needs processing ──
+            self._startup_evolution()
+        
         # Register built-in skills
         self._register_builtins()
 
@@ -124,11 +191,42 @@ class Agent:
                 target=self._backfill_vectors, daemon=True, name="VectorBackfill"
             ).start()
 
+        # ── Startup: check if yesterday's journal needs processing ──
+        self._startup_evolution()
+
     def _load_persona(self, path: str) -> str:
         p = Path(path)
         if p.exists():
             return p.read_text(encoding="utf-8")
         return "你是一个有帮助的 AI 助理。"
+    
+    def _load_habits(self) -> None:
+        if self.habits_path.exists():
+            self.interaction_habits = self.habits_path.read_text(encoding="utf-8")
+        else:
+            self.interaction_habits = ""
+    
+    def switch_persona(self, name: str) -> bool:
+        """Switch to a different persona file in the identities directory."""
+        target_path = self.identities_dir / f"{name}.md"
+        if target_path.exists():
+            self.active_persona_name = name
+            self.persona_path = str(target_path)
+            self.persona = self._load_persona(self.persona_path)
+            
+            # Update config
+            self.config["active_persona"] = name
+            with open("data/config.json", "w", encoding="utf-8") as f:
+                json.dump(self.config, f, ensure_ascii=False, indent=4)
+                
+            # Sync the new persona to evolution module so it writes diaries with the new identity
+            self.evolution.persona_path = Path(self.persona_path)
+            return True
+        return False
+        
+    def list_personas(self) -> List[str]:
+        """List all available personas."""
+        return [p.stem for p in self.identities_dir.glob("*.md")]
 
     def _backfill_vectors(self) -> None:
         """
@@ -180,23 +278,55 @@ class Agent:
             return f"✅ 已记住: {item.content}（ID: {item.id}）"
 
         @self.skills.skill(
-            name="recall",
-            description="根据关键词查询长期记忆。",
+            name="search_memory",
+            description="【核心记忆搜索工具】一次性并发查询：日记本、长期记忆碎片、知识图谱。当你需要回忆过去的事件、聊天记录、用户偏好、关系网络等任何历史信息时优先使用此工具。使用精准关键词（如实体名）进行搜索。",
             parameters={
                 "properties": {
-                    "query": {"type": "string", "description": "搜索关键词"},
-                    "top_k": {"type": "integer", "description": "返回条数，默认5"},
+                    "query": {"type": "string", "description": "搜索关键词，如 '南京'、'写代码'、'苹果'"},
                 },
                 "required": ["query"],
             },
             category="memory",
         )
-        def recall(query: str, top_k: int = 5):
-            results = self.memory.search(query, top_k=top_k)
-            if not results:
-                return "未找到相关记忆。"
-            lines = [f"[ID:{m.id}] [{m.created_at}] {m.content}" for m in results]
-            return "\n".join(lines)
+        def search_memory(query: str):
+            import concurrent.futures
+
+            def _search_diary():
+                results = self.diary.search(query, top_k=3)
+                if not results:
+                    return "日记：无相关记录。"
+                lines = [f"### {item['date']}\n{item['snippet']}" for item in results]
+                return "【日记捕获】\n" + "\n\n".join(lines)
+
+            def _search_vector():
+                results = self.memory.search(query, top_k=5)
+                if not results:
+                    return "长期记忆碎片：无相关记录。"
+                lines = [f"[{m.created_at}] {m.content}" for m in results]
+                return "【长期记忆碎片】\n" + "\n".join(lines)
+
+            def _search_kg():
+                if not self.kg:
+                    return "知识图谱：未启用。"
+                context = self.kg.context_for_entity(query)
+                return context if context else f"知识图谱：未找到与 '{query}' 的关联信息。"
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                f_diary = executor.submit(_search_diary)
+                f_vector = executor.submit(_search_vector)
+                f_kg = executor.submit(_search_kg)
+
+                res_diary = f_diary.result()
+                res_vector = f_vector.result()
+                res_kg = f_kg.result()
+
+            report = (
+                f"### 统一搜索结果雷达：'{query}'\n\n"
+                f"{res_diary}\n\n"
+                f"---\n{res_vector}\n\n"
+                f"---\n{res_kg}"
+            )
+            return report
 
         @self.skills.skill(
             name="new_session",
@@ -224,27 +354,7 @@ class Agent:
             ]
             return "\n".join(lines)
 
-        @self.skills.skill(
-            name="search_journal",
-            description="搜索你的私人日记（Diary）。当你需要回忆过去的经历、感受或重要事件时使用。",
-            parameters={
-                "properties": {
-                    "query": {"type": "string", "description": "搜索内容，如 '上周的感受'"},
-                    "top_k": {"type": "integer", "description": "返回条数，默认3"},
-                },
-                "required": ["query"],
-            },
-            category="memory",
-        )
-        def search_journal(query: str, top_k: int = 3):
-            results = self.diary.search(query, top_k=top_k)
-            if not results:
-                return "日记本里没有找到相关内容。"
-            
-            lines = []
-            for item in results:
-                lines.append(f"### {item['date']}\n{item['snippet']}")
-            return "\n\n".join(lines)
+
 
         @self.skills.skill(
             name="update_memory",
@@ -313,20 +423,60 @@ class Agent:
         module.register(self.skills)
 
     def _build_system_prompt(self, user_query: str = "") -> str:
-        """Build the full system prompt: Persona + Memory + Skill Summary."""
-        parts = [self.persona]
+        """Build the full system prompt: Persona + User Profile + Dynamic Memory + Skill Summary."""
+        import time
+        current_time_str = time.strftime("%Y-%m-%d %H:%M:%S")
+        weekday_str = time.strftime("%A")
+        time_awareness = f"# 当前系统时间\n现在是 {current_time_str}，星期{weekday_str}。请在理解用户的“今天”、“昨天”等相对时间概念时，以此时间为基准。"
 
-        # Inject relevant memories
-        if user_query:
+        parts = [time_awareness, self.persona]
+
+        # Inject Global Interaction Habits
+        self._load_habits()  # Refresh before building prompt in case it was evolved
+        if self.interaction_habits.strip():
+            parts.append(f"# 全局交往习惯与规则 (Interaction Habits)\n{self.interaction_habits}")
+
+        # Inject User Profile
+        profile_ctx = self.user_profile.build_prompt()
+        if profile_ctx:
+            parts.append(profile_ctx)
+
+        # Dynamic Memory Injection (Top-K related memories based on user query)
+        if user_query and self.memory._vector_store:
+            # Instead of injecting the entire memory database, we only inject contextually relevant facts.
+            try:
+                related_mems = self.memory.search(user_query, top_k=3)
+                if related_mems:
+                    mem_lines = [f"- {m.content}" for m in related_mems]
+                    mem_ctx = "# 相关长期记忆 (Context)\n" + "\n".join(mem_lines)
+                    parts.append(mem_ctx)
+            except Exception as e:
+                pass
+        elif user_query and not self.memory.vector_store:
+            # Fallback to standard context if no vector store (which just takes the last N memories)
             mem_ctx = self.memory.build_context(user_query)
             if mem_ctx:
                 parts.append(mem_ctx)
+
+        # Inject active plan status (if any) — ensures agent never forgets its roadmap
+        try:
+            import plugins.plan_handler as _ph
+            plan_md = _ph._manager.get_status_markdown()
+            if plan_md and "当前没有任何活跃" not in plan_md:
+                parts.append(
+                    "# 当前活跃任务计划 (Active Plan)\n"
+                    "> 以下是你正在执行的多步任务进度。每完成一步后必须立即调用 `update_plan_step` 更新状态。\n"
+                    "> 如果所有步骤均已处理完成，你必须调用 `complete_plan` 来全盘总结并结案。\n\n"
+                    + plan_md
+                )
+        except Exception:
+            pass
 
         # Inject skill list
         skill_summary = self.skills.summary()
         parts.append(f"# 可用技能 (Skills)\n{skill_summary}")
 
-        parts.append(BUILTIN_SYSTEM_SUFFIX)
+        parts.append(_build_builtin_suffix())
         return "\n\n---\n\n".join(parts)
 
     def chat(self, user_input: str) -> str:
@@ -349,7 +499,16 @@ class Agent:
         messages.append({"role": "user", "content": user_input})
 
         tools = self.skills.get_tool_definitions()
-        max_tool_rounds = 10
+        
+        max_tool_rounds = 15
+        # 如果有活跃的计划，放宽工具调用轮次上限，让自驾模式能一口气跑完
+        try:
+            import plugins.plan_handler as _ph
+            if _ph._manager.active_plan:
+                max_tool_rounds = 40
+        except Exception:
+            pass
+            
         final_response = None
 
         for _ in range(max_tool_rounds):
@@ -421,23 +580,84 @@ class Agent:
 
         return final_response
 
+    def _startup_evolution(self) -> None:
+        """
+        On startup, check recent days for un-processed journals.
+        If yesterday (or earlier) has a journal but no diary, trigger evolution.
+        This fixes the bug where last_interaction_date is always set to today
+        on startup, making the cross-day detection in _check_all_triggers
+        never fire.
+        """
+        from datetime import datetime, timedelta
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        # Look back up to 7 days to find unprocessed journals
+        for days_back in range(1, 8):
+            check_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+            journal_content = self.journal.read_day(check_date)
+
+            if not journal_content or not journal_content.strip():
+                continue  # No journal for this day, keep looking further back
+
+            # Has journal — but was it already processed?
+            if self.diary.has_diary(check_date):
+                # Already processed (diary exists). Earlier days presumably also done.
+                break
+
+            # Found an un-processed journal!
+            print(f"[System] 🔍 发现 {check_date} 的日志尚未总结，已将其加入后台自我进化队列...")
+            
+            def _run_evolution(d=check_date):
+                try:
+                    # Step 1: 汇总当天所有聊天记录写入 journal
+                    self._summarize_day_conversations(d)
+
+                    # Step 2: 基于完整 journal (视觉日志 + 聊天总结) 生成 diary + 提取记忆
+                    new_mems = self.evolution.evolve_from_journal(d)
+                    if new_mems:
+                        print(f"\n[System] ✨ {d} 后台进化完成！习得了 {len(new_mems)} 条新记忆。\n> ", end="", flush=True)
+                    else:
+                        print(f"\n[System] {d} 后台进化完成，未发现新知识。\n> ", end="", flush=True)
+
+                    # Step 3: 尝试人设微调
+                    self.evolution.evolve_persona()
+                except Exception as e:
+                    import traceback
+                    print(f"\n[System] ⚠️ {d} 后台进化出错: {e}\n{traceback.format_exc()}\n> ", end="", flush=True)
+
+            # Start thread and don't block
+            threading.Thread(target=_run_evolution, daemon=True, name=f"Evo_{check_date}").start()
+
+        # Set to today so _check_all_triggers works correctly for future cross-day
+        self.last_interaction_date = today
+
     def _check_all_triggers(self) -> None:
         """Check and execute maintenance triggers."""
         # 1. Date change -> Daily Summary + Evolution
         current_date = time.strftime("%Y-%m-%d")
         if current_date != self.last_interaction_date:
-            print(f"[System] 检测到跨天 ({self.last_interaction_date} -> {current_date})")
-            # 总结昨天的（如果有）
-            # 由于 session 可能是连续的，我们简化为：每天首次交互时，触发昨天的进化
-            # 注意：实际日志是按 append 写入的，所以昨天的日志文件已经存在
-            
-            # 触发自我进化 (读取昨天的日志 -> 提取记忆)
-            print(f"[System] 开始自我进化：分析 {self.last_interaction_date} 日志...")
-            new_mems = self.evolution.evolve_from_journal(self.last_interaction_date)
-            if new_mems:
-                print(f"[System] ✨ 进化完成！习得了 {len(new_mems)} 条新记忆。")
-            else:
-                print("[System] 进化完成，未通过日志发现新知识。")
+            prev_date = self.last_interaction_date
+            print(f"[System] 检测到跨天 ({prev_date} -> {current_date})，后台自我进化已启动。")
+
+            def _run_daily_evo(d=prev_date):
+                try:
+                    # Step 1: 汇总昨天所有聊天记录写入 journal
+                    self._summarize_day_conversations(d)
+
+                    # Step 2: 基于完整 journal (视觉日志 + 聊天总结) 生成 diary + 提取记忆
+                    print(f"\n[System] 🧠 开始后台自我进化：分析 {d} 日志...\n> ", end="", flush=True)
+                    new_mems = self.evolution.evolve_from_journal(d)
+                    if new_mems:
+                        print(f"\n[System] ✨ 后台进化完成！习得了 {len(new_mems)} 条新记忆。\n> ", end="", flush=True)
+                    else:
+                        print(f"\n[System] 后台进化完成，未通过日志发现新知识。\n> ", end="", flush=True)
+
+                    # Step 3: 尝试人设微调
+                    self.evolution.evolve_persona()
+                except Exception as e:
+                    print(f"\n[System] ⚠️ 跨天后台进化出错: {e}\n> ", end="", flush=True)
+
+            threading.Thread(target=_run_daily_evo, daemon=True, name=f"DailyEvo_{prev_date}").start()
 
             self.last_interaction_date = current_date
 
@@ -474,7 +694,7 @@ class Agent:
         try:
             prompt = f"请总结以下对话片段，提取关键信息（意图、操作、结果），作为'前情提要'。保留关键事实，去除闲聊。\n\n{text_block}"
             resp = self.client.chat.completions.create(
-                model=self.model,
+                model=self.evolution_model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=500,
             )
@@ -496,3 +716,66 @@ class Agent:
         print(f"[System] 滚动总结完成。已归档 {len(pruned)} 条消息到日志。")
         self.sessions.save()
 
+    def _summarize_day_conversations(self, date_str: str) -> None:
+        """
+        收集指定日期所有 session 中的对话内容，用 LLM 总结后追加到当天 journal。
+        这样 evolve_from_journal 就能同时看到 [视觉日志 + 聊天总结]。
+        """
+        # 1. 遍历所有 session 文件，收集该日期的对话
+        all_conversations = []
+        for path in sorted(self.sessions.sessions_dir.glob("*.json")):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                messages = data.get("messages", [])
+                # 筛选该日期的消息
+                day_msgs = [
+                    m for m in messages
+                    if m.get("timestamp", "").startswith(date_str)
+                ]
+                if day_msgs:
+                    all_conversations.extend(day_msgs)
+            except Exception:
+                continue
+
+        if not all_conversations:
+            print(f"[System] {date_str} 没有找到聊天记录，跳过对话总结。")
+            return
+
+        # 2. 格式化对话内容 (截断过长的单条消息)
+        lines = []
+        for m in all_conversations:
+            role = "用户" if m["role"] == "user" else "AI"
+            content = m.get("content", "")
+            if len(content) > 500:
+                content = content[:500] + "...(截断)"
+            ts = m.get("timestamp", "").split(" ")[-1] if " " in m.get("timestamp", "") else ""
+            lines.append(f"[{ts}] {role}: {content}")
+
+        conversation_text = "\n".join(lines)
+
+        # 3. 用 LLM 总结
+        print(f"[System] 📝 正在总结 {date_str} 的 {len(all_conversations)} 条聊天记录...")
+        try:
+            prompt = (
+                f"请总结以下一天的人机聊天记录，提取关键信息：用户提了哪些问题/任务、"
+                f"AI 做了什么、有哪些重要的结论或决定。保留具体事实，去除无意义的寒暄。\n"
+                f"用简洁的要点形式总结，300字以内。\n\n"
+                f"## {date_str} 聊天记录\n{conversation_text}"
+            )
+            resp = self.client.chat.completions.create(
+                model=self.evolution_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=600,
+                temperature=0.3,
+            )
+            summary = resp.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"[System] ⚠️ 聊天总结失败: {e}")
+            # Fallback: 直接把原始对话截断写入
+            summary = conversation_text[:2000]
+
+        # 4. 写入 journal
+        journal_entry = f"**[聊天总结]** 共 {len(all_conversations)} 条消息\n{summary}"
+        self.journal.append(journal_entry, date_str=date_str)
+        print(f"[System] ✅ {date_str} 聊天总结已写入日志。")

@@ -35,3 +35,35 @@ class JournalManager:
         if not path.exists():
             return None
         return path.read_text(encoding="utf-8")
+
+    def update_last_time(self, date_str: str = None) -> None:
+        """
+        Updates the timestamp of the last log entry to indicate a duration.
+        e.g., `## [13:00:00]` becomes `## [13:00:00 ~ 13:05:00]`
+        """
+        import re
+        if date_str is None:
+            date_str = time.strftime("%Y-%m-%d")
+        
+        path = self._get_file_path(date_str)
+        if not path.exists():
+            return
+            
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+                
+            # Find the last `## [...]` line
+            for i in range(len(lines)-1, -1, -1):
+                line = lines[i]
+                if line.startswith("## ["):
+                    current_time = time.strftime("%H:%M:%S")
+                    m = re.match(r"^## \[([^~\]]+)(?: ~ [^\]]+)?\]", line)
+                    if m:
+                        start_time = m.group(1).strip()
+                        lines[i] = f"## [{start_time} ~ {current_time}]\n"
+                        with open(path, "w", encoding="utf-8") as f:
+                            f.writelines(lines)
+                    break
+        except Exception as e:
+            print(f"[Journal] Failed to update last time: {e}")

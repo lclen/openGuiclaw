@@ -12,7 +12,7 @@ After each Daily Journal is written, this module:
 import json
 import time
 from pathlib import Path
-from typing import List, Optional, TYPE_CHECKING
+from typing import List, Optional, Any, TYPE_CHECKING
 
 from openai import OpenAI
 from core.memory import MemoryManager
@@ -28,22 +28,44 @@ if TYPE_CHECKING:
 # ── Prompts ──────────────────────────────────────────────────────────
 
 EXTRACTION_PROMPT = """\
-你是一个记忆提取助手。你会对以下对话日志进行分析，提取出值得长期记住的信息。
+你是一个记忆提取专家。你会对以下日志进行分析，判断是否包含值得**长期**记住的强信号信息。
+
+现有用户核心档案：
+{profile_context}
 
 现有记忆库摘要：
 {memory_context}
 
-规则：
-1. **去重**：如果现有记忆库已经包含了某条信息，不要重复添加。
-2. **更新**：如果发现现有记忆过时（例如“正在做项目A”变为“项目A已完成”），请生成更新指令。
-3. **新增**：提取新的具体事实（用户偏好、文件路径、重要决定）。
-4. **忽略**：闲聊、临时指令、当天才有效的信息。
+**提取标准（非常严格）**：
+只有满足以下情况才值得提取：
+1. **用户核心档案（最高优先级）**：明确的、固有的用户属性（如“我想吃苹果”、“我叫米勒”、“我25岁”、“我是一名程序员”）。
+2. **用户偏好/习惯**：明确表达的喜好或开发习惯（如“我喜欢用Vim”、“习惯用下划线命名”）。
+3. **重要规则**：用户明确要求的约束（如“以后不要再提示这个了”、“必须先格式化再运行”）。
+4. **状态更新**：发现现有记忆库的内容过时，需要修改或覆盖。
+5. **成功经验/教训**：成功解决复杂问题的关键思路，或必须避免的重大错误。
 
-返回 JSON 数组，格式如下：
-[
-  {{"action": "add", "content": "喜欢喝拿铁", "tags": ["偏好"]}},
-  {{"action": "update", "original_content": "旧的记忆内容", "new_content": "更新后的内容", "tags": []}}
-]
+**禁忌（绝对不能提取的内容）**：
+- ❌ 临时任务、日常的普通对话（如“帮我写个脚本”、“运行一下”）。
+- ❌ 当天有效、明天就没用的瞬时状态（如“正在读 agent.py”、“打开了浏览器”）。
+- ❌ 已经存在于“现有记忆库”中的重复信息。
+- ❌ 过于细节或显而易见的代码片段解释。
+
+💡 **大部分日常交互都不需要记录！宁缺毋滥。** 如果没有非常重要的信息，请直接返回空的 JSON 对象 `{{"profile_updates": [], "memories": []}}`。
+
+返回的 JSON 结构必须严格符合以下格式：
+{{
+  "profile_updates": [
+    {{"action": "update", "layer": "objective" 或 "subjective", "key": "属性名(如: 姓名/偏好)", "value": "属性/偏好值"}}
+  ],
+  "memories": [
+    {{"action": "add", "content": "精简凝练的核心事实/长线事件", "tags": ["标签"]}},
+    {{"action": "update", "original_content": "现有的旧记忆", "new_content": "更新后的记忆", "tags": []}}
+  ]
+}}
+
+### 关于 layer 的判断依据：
+- **objective**（客观身份）：客观存在的事实，比如姓名、年龄、职业、居住地、使用的硬件等。
+- **subjective**（主观偏好）：非实体的规矩或习惯，比如“必须要用中文回答”、“所有文件必须存到 xxx 文件夹”、“讨厌看到废话”、“喜欢的文章风格”。
 
 ---
 ## 日志内容：
@@ -57,12 +79,12 @@ RELATION_PROMPT = """\
 规则：
 - 只提取真实、具体的关系（人物、地点、工具、项目之间的关联）。
 - 格式：subject（主语）、relation（关系/谓语）、object（宾语）。
-- 例如：{"subject": "张三", "relation": "是...的导师", "object": "李四"}
+- 例如：{{"subject": "张三", "relation": "是...的导师", "object": "李四"}}
 - 忽略模糊、推测性的关系。
 
 返回 JSON 数组，无关系则返回 []：
 [
-  {"subject": "...", "relation": "...", "object": "..."},
+  {{"subject": "...", "relation": "...", "object": "..."}},
   ...
 ]
 
@@ -90,17 +112,18 @@ DIARY_PROMPT = """\
 """
 
 PERSONA_PROMPT = """\
-你是一个 AI 人格顾问。以下是 AI 助理从近期交互中积累的新记忆：
+你是一个 AI 行为习惯顾问。以下是 AI 助理从近期交互中积累的新记忆：
 
 {memories}
 
-当前的人格定义内容：
-{current_persona}
+当前的 AI 沟通与行为习惯沉淀（Interaction Habits）：
+{current_habits}
 
-请判断是否需要对人格描述进行**小幅度**优化或补充。
+请判断是否需要对行为习惯描述进行**小幅度**补充或修剪。
 
 规则：
-- **小幅度**：只需修改或增加与用户互动习惯、语气、偏好相关的细节。
+- **小幅度**：只需提取或修改与“AI该如何回复用户”、“用户的代码/文档排版偏好规定”相关的普遍性守则。不要提取单个零碎事实（零碎事实应该进知识图谱和记忆库）。
+- **注意**：这不是在写人设，而是在写约束规则或行事风格补充。
 - **操作类型**：
     - "append": 在末尾增加新规则或习惯描述。
     - "modify": 修正现有的不准确描述。
@@ -135,15 +158,22 @@ class SelfEvolution:
         persona_path: str = "PERSONA.md",
         data_dir: str = "data",
         knowledge_graph: Optional[KnowledgeGraph] = None,
+        user_profile: Optional[Any] = None,
     ):
         self.client = client
         self.model = model
         self.memory = memory
         self.journal = journal
         self.diary = DiaryManager(data_dir)
+        # 记录当前使用的基础人设（仅供日记生成时读取，不修改）
         self.persona_path = Path(persona_path)
-        self.audit = PersonaAudit(persona_path=persona_path, data_dir=data_dir)
+        
+        # We no longer modify persona_path. Persona files are immutable.
+        # We use a shared interaction_habits.md instead
+        self.habits_path = Path(data_dir) / "interaction_habits.md"
+        self.audit = PersonaAudit(persona_path=str(self.habits_path), data_dir=data_dir)
         self.kg = knowledge_graph  # May be None if not initialized
+        self.user_profile = user_profile
 
     # ── Public API ───────────────────────────────────────────────────
 
@@ -173,31 +203,30 @@ class SelfEvolution:
 
     def evolve_persona(self, recent_count: int = 20) -> bool:
         """
-        Review recent memories and optionally update PERSONA.md.
+        Review recent memories and optionally update interaction_habits.md.
         A snapshot is saved BEFORE any modification.
-        Returns True if the persona was updated.
+        Returns True if the habits were updated.
         """
-        if not self.persona_path.exists():
-            print(f"[SelfEvolution] PERSONA.md not found at {self.persona_path}")
-            return False
+        if not self.habits_path.exists():
+            self.habits_path.write_text("这是系统自我进化生成的习惯积累：\n", encoding="utf-8")
 
         memories = self.memory.list_all()[-recent_count:]
         if not memories:
             return False
 
         memory_text = "\n".join(f"- {m.content}" for m in memories)
-        current_persona = self.persona_path.read_text(encoding="utf-8")
+        current_habits = self.habits_path.read_text(encoding="utf-8")
 
         prompt = PERSONA_PROMPT.format(
             memories=memory_text,
-            current_persona=current_persona,
+            current_habits=current_habits,
         )
 
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "你是 AI 人格顾问，返回纯 JSON，不加代码块。"},
+                    {"role": "system", "content": "你是 AI 习惯记录员，返回纯 JSON，不加代码块。"},
                     {"role": "user", "content": prompt},
                 ],
                 max_tokens=600,
@@ -212,7 +241,7 @@ class SelfEvolution:
             action = result.get("action", "none")
 
             if action == "none":
-                print("[SelfEvolution] 人格无需更新。")
+                print("[SelfEvolution] 交互习惯无需更新。")
                 return False
 
             # ── Take a snapshot BEFORE modifying ──────────────────
@@ -224,10 +253,10 @@ class SelfEvolution:
                 content = result.get("content", "").strip()
                 if not content:
                     return False
-                with open(self.persona_path, "a", encoding="utf-8") as f:
+                with open(self.habits_path, "a", encoding="utf-8") as f:
                     ts = time.strftime("%Y-%m-%d")
                     f.write(f"\n\n<!-- 自动进化 {ts} -->\n{content}\n")
-                print(f"[SelfEvolution] ✨ 人格已追加: {content[:60]}...")
+                print(f"[SelfEvolution] ✨ 交互习惯已追加: {content[:60]}...")
                 return True
 
             if action == "modify":
@@ -235,19 +264,19 @@ class SelfEvolution:
                 replacement = result.get("replacement_text", "").strip()
                 if not target or not replacement:
                     return False
-                if target in current_persona:
-                    new_content = current_persona.replace(target, replacement)
-                    self.persona_path.write_text(new_content, encoding="utf-8")
-                    print("[SelfEvolution] 🛠️ 人格描述已修正。")
+                if target in current_habits:
+                    new_content = current_habits.replace(target, replacement)
+                    self.habits_path.write_text(new_content, encoding="utf-8")
+                    print("[SelfEvolution] 🛠️ 交互习惯描述已修正。")
                     return True
                 else:
-                    print("[SelfEvolution] ⚠️ 未找到匹配的旧文本，无法修改。")
+                    print("[SelfEvolution] ⚠️ 未找到匹配的旧习惯文本，无法修改。")
                     return False
 
             return False
 
         except Exception as e:
-            print(f"[SelfEvolution] Persona evolution error: {e}")
+            print(f"[SelfEvolution] Habits evolution error: {e}")
             return False
 
     # ── Private Helpers ──────────────────────────────────────────────
@@ -259,26 +288,58 @@ class SelfEvolution:
         context_lines = [f"- {m.content}" for m in all_mems[-50:]]
         memory_context = "\n".join(context_lines)
 
-        prompt = EXTRACTION_PROMPT.format(journal=journal_content, memory_context=memory_context)
+        # 2. Get user profile context
+        profile_context = "无"
+        if getattr(self, "user_profile", None):
+            profile_data = self.user_profile.get_all()
+            if profile_data:
+                profile_context = "\n".join([f"- {k}: {v}" for k, v in profile_data.items()])
+
+        prompt = EXTRACTION_PROMPT.format(
+            journal=journal_content,
+            memory_context=memory_context,
+            profile_context=profile_context
+        )
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "你是记忆提取助手，返回纯 JSON 数组，不加代码块。"},
+                    {"role": "system", "content": "你是记忆提取助手，返回纯 JSON 对象，不加代码块。"},
                     {"role": "user", "content": prompt},
                 ],
                 max_tokens=1024,
                 temperature=0.3,
             )
-            text = response.choices[0].message.content or "[]"
+            text = response.choices[0].message.content or "{}"
             if text.startswith("```"):
                 text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
-            items = json.loads(text)
-            if not isinstance(items, list):
-                return []
+            result = json.loads(text)
+            if not isinstance(result, dict):
+                if isinstance(result, list):
+                    # Fallback to legacy array format mapping to memories
+                    result = {"memories": result, "profile_updates": []}
+                else:
+                    return []
 
             saved = []
+
+            # 1. Update User Profile
+            profile_updates = result.get("profile_updates", [])
+            for pu in profile_updates:
+                if not isinstance(pu, dict): continue
+                layer = pu.get("layer", "objective").strip().lower()
+                key = pu.get("key", "").strip()
+                val = pu.get("value", "").strip()
+                if key and val and self.user_profile:
+                    if layer == "subjective":
+                        self.user_profile.update_subjective(key, val)
+                    else:
+                        self.user_profile.update_objective(key, val)
+                    saved.append(f"[档案更新] {layer}.{key}: {val}")
+
+            # 2. Update Memory
+            items = result.get("memories", [])
             for item in items:
                 if not isinstance(item, dict): continue
                 

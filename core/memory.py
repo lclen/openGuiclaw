@@ -56,7 +56,7 @@ class MemoryManager:
     ):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(exist_ok=True)
-        self.memory_file = self.data_dir / "memory.jsonl"
+        self.memory_file = self.data_dir / "scene_memory.jsonl"
         self._memories: List[MemoryItem] = []
         self._embedding_client = embedding_client
         self._vector_store = vector_store
