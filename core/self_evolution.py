@@ -293,7 +293,12 @@ class SelfEvolution:
         if getattr(self, "user_profile", None):
             profile_data = self.user_profile.get_all()
             if profile_data:
-                profile_context = "\n".join([f"- {k}: {v}" for k, v in profile_data.items()])
+                lines_p = []
+                for layer, items in profile_data.items():
+                    if isinstance(items, dict) and items:
+                        lines_p.append(f"[{layer}]")
+                        lines_p.extend([f"  - {k}: {v}" for k, v in items.items()])
+                profile_context = "\n".join(lines_p) if lines_p else "无"
 
         prompt = EXTRACTION_PROMPT.format(
             journal=journal_content,

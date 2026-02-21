@@ -32,6 +32,12 @@ class UserProfileManager:
                     # Migration from flat structure
                     if "objective_memory" not in data and "subjective_memory" not in data:
                         migrated_data = {"objective_memory": data, "subjective_memory": {}}
+                        # Persist migrated format immediately to avoid re-migrating every startup
+                        try:
+                            with open(self.profile_path, "w", encoding="utf-8") as fw:
+                                json.dump(migrated_data, fw, ensure_ascii=False, indent=4)
+                        except Exception:
+                            pass
                         return migrated_data
                     
                     # Ensure both layers exist

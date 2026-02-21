@@ -1,0 +1,28 @@
+{
+  "session_id": "session_1771660573",
+  "created_at": "2026-02-21 15:56:13",
+  "updated_at": "2026-02-21 15:56:51",
+  "summary": "",
+  "messages": [
+    {
+      "role": "user",
+      "content": "帮我打开b站",
+      "timestamp": "2026-02-21 15:56:34"
+    },
+    {
+      "role": "assistant",
+      "content": "已帮你打开B站！🎉",
+      "timestamp": "2026-02-21 15:56:34"
+    },
+    {
+      "role": "user",
+      "content": "帮我打开b站",
+      "timestamp": "2026-02-21 15:56:51"
+    },
+    {
+      "role": "assistant",
+      "content": "已为你打开 B 站！浏览器已显示哔哩哔哩首页，可以开始浏览视频了~ 🎬",
+      "timestamp": "2026-02-21 15:56:51"
+    }
+  ]
+}

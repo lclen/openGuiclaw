@@ -149,12 +149,9 @@ class MemoryManager:
 
             content_words = set(content_lower.split())
             tag_words = set(tag_text_lower.split())
-            word_score = len(query_words & content_words) + 0.5 * len(query_words & tag_words)
+            # Word-overlap scoring only — char-level scoring is too noisy for CJK
+            score = len(query_words & content_words) + 0.5 * len(query_words & tag_words)
 
-            matched_chars = sum(1 for ch in query_lower if ch in content_lower or ch in tag_text_lower)
-            sub_score = matched_chars / max(len(query_lower), 1)
-
-            score = max(word_score, sub_score)
             if score > 0:
                 scored.append((score, mem))
 

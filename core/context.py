@@ -15,7 +15,7 @@ import queue
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable, List
 
 from openai import OpenAI
 
@@ -23,17 +23,24 @@ from openai import OpenAI
 # ── Prompt ─────────────────────────────────────────────────────────
 
 VISION_PROMPT = """\
-请分析这张屏幕截图，用简体中文描述用户当前正在做什么。
+请分析这张屏幕截图，并结合提供的[历史上下文]，用简体中文描述用户当前正在做什么。
+[历史上下文]包含了最近几分钟的视觉感知记录和聊天记录，请利用这些信息来保持感知的连续性，避免给出与前文矛盾的推断。
+
+状态判定准则：
+- status: 以下之一 ——
+  - working: 正在工作。标志：编辑器（VSCode）、终端（充满日志/代码）、文档、协同工具（Slack/飞书）、学术网站。
+  - entertainment: 娱乐休闲。标志：视频网站（Bilibili、YouTube、爱奇艺）、社交媒体（微博、Twitter）、各种游戏、音乐播放器。**注意**：即使角落里开了终端，只要主窗口或视觉焦点在视频/游戏上，就判定为 entertainment。
+  - idle: 发呆/空闲。标志：显示桌面、屏保、长时间停留在无关紧要的静态网页。
+  - error: 看到报错。标志：明显的红色报错日志、对话框警告。
+
 要求：
-- summary: 1~2句话，简洁描述用户正在做的事，例如"用户在 VSCode 中编写 Python 代码"。
-- status: 以下之一 —— working（正在工作）/ idle（屏幕静止/发呆）/ error（看到报错）/ entertainment（游戏/视频/娱乐）
-- needs_interaction: 布尔值，是否值得主动与用户互动。
-  - true 的情况：检测到报错、用户看起来卡住了、状态从 working 切换到 entertainment（休息了）、已经 idle 超过阈值。
-  - false 的情况：用户正常工作、只是浏览网页。
-- suggested_message: 如果 needs_interaction=true，给出1~2句自然、活泼的互动话语（中文）。否则为 null。
+- summary: 1~2句话，简洁描述，例如"用户在 B 站观看视频，侧边挂着终端"。
+- status: 见上文。
+- needs_interaction: 布尔值。如果进入 entertainment、idle 或 error 状态，通常应为 true。
+- suggested_message: 如果 status 不为 working，请务必给出1~3句人性化、自然、有趣、“活人感”，带点主观色彩的互动内容（如关心、催促工作、吐槽视频内容等）。
 
 返回纯 JSON，不要 Markdown 代码块。格式：
-{"summary": "...", "status": "working", "needs_interaction": false, "suggested_message": null}
+{"summary": "...", "status": "entertainment", "needs_interaction": true, "suggested_message": "..."}
 """
 
 
@@ -52,7 +59,8 @@ class ContextManager:
     Args:
         client: OpenAI-compatible client (Qwen API).
         vision_model: Model name with Vision capability, e.g. "qwen-vl-plus".
-        journal: JournalManager instance to log visual summaries.
+        add_visual_log_func: Callback to write a visual log string into the current session.
+        get_visual_history_func: Callback to retrieve recent visual logs from the current session.
         interval_seconds: How often to capture. Default 300 (5 min).
         notification_queue: A queue.Queue() that main loop reads proactive msgs from.
         cooldown_minutes: After sending a proactive msg, silence for N minutes if no reply.
@@ -62,17 +70,23 @@ class ContextManager:
         self,
         client: OpenAI,
         vision_model: str,
-        journal,
+        add_visual_log_func: Optional[Callable] = None,
+        get_visual_history_func: Optional[Callable] = None,
+        update_visual_log_func: Optional[Callable] = None,
         interval_seconds: int = 300,
         notification_queue: Optional[queue.Queue] = None,
         cooldown_minutes: int = 30,
+        get_history_func: Optional[Callable] = None,
     ):
         self.client = client
         self.vision_model = vision_model
-        self.journal = journal
+        self.add_visual_log_func = add_visual_log_func
+        self.get_visual_history_func = get_visual_history_func
+        self.update_visual_log_func = update_visual_log_func
         self.interval = interval_seconds
         self.notification_queue = notification_queue or queue.Queue()
         self.cooldown_minutes = cooldown_minutes
+        self.get_history_func = get_history_func
         self.mode: str = MODE_NORMAL       # 默认普通模式
         self.verbose: bool = True          # 是否在终端显示截屏日志（后期可在设置中关闭）
 
@@ -135,7 +149,22 @@ class ContextManager:
             ts = time.strftime("%H:%M:%S")
             print(f"\n[Context {ts}] 正在分析屏幕...", flush=True)
 
-        result = self._analyze_screen(screenshot_b64)
+        # ── 获取上下文历史 ──
+        history_text = ""
+        # 1. 聊天历史
+        if self.get_history_func:
+            msgs = self.get_history_func()
+            if msgs:
+                chat_lines = [f"- {m['role']}: {m['content'][:100]}" for m in msgs]
+                history_text += "【最近聊天】\n" + "\n".join(chat_lines) + "\n"
+        
+        # 2. 视觉感知历史 (从 Session 读取最近)
+        if self.get_visual_history_func:
+            v_msgs = self.get_visual_history_func()
+            if v_msgs:
+                history_text += "【最近感知日志】\n" + "\n".join(v_msgs[-4:]) + "\n"
+
+        result = self._analyze_screen(screenshot_b64, history_text)
         if not result:
             return
 
@@ -180,15 +209,19 @@ class ContextManager:
                 if sim >= 0.55:  # >= 55% 词级别重合度才算同一行为延续
                     is_duplicate = True
 
-        # Log to journal
+        # Log to Session
         if summary and not is_duplicate:
             log_entry = f"**[视觉日志]** 状态: `{status}` — {summary}"
-            self.journal.append(log_entry)
+            if self.add_visual_log_func:
+                self.add_visual_log_func(log_entry)
             self._last_summary = summary
         elif summary and is_duplicate:
-            self.journal.update_last_time()
+            # 去重：更新上一条日志的「持续至」时间，而不是跳过
+            current_time = time.strftime("%H:%M:%S")
+            if self.update_visual_log_func:
+                self.update_visual_log_func(current_time)
             if self.verbose:
-                print(f"[Context] 💤 状态未发生显著变化（延续 {status}），已自动更新记录的时长。")
+                print(f"[Context] 💤 状态延续（{status}），已更新持续时间至 {current_time}。")
 
         # Proactive interaction decision
         if needs_interaction and suggested_message:
@@ -223,8 +256,12 @@ class ContextManager:
 
     # ── Vision Analysis ──────────────────────────────────────────────
 
-    def _analyze_screen(self, screenshot_b64: str) -> Optional[dict]:
-        """Send screenshot to vision model and parse result."""
+    def _analyze_screen(self, screenshot_b64: str, history: str = "") -> Optional[dict]:
+        """Send screenshot and optional history to vision model and parse result."""
+        prompt = VISION_PROMPT
+        if history:
+            prompt = f"### [历史上下文] ###\n{history}\n\n" + prompt
+
         try:
             response = self.client.chat.completions.create(
                 model=self.vision_model,
@@ -238,10 +275,10 @@ class ContextManager:
                                     "url": f"data:image/png;base64,{screenshot_b64}"
                                 },
                             },
-                            {
+                        {
                                 "type": "text",
-                                "text": VISION_PROMPT,
-                            },
+                                "text": prompt,
+                        },
                         ],
                     }
                 ],
@@ -276,7 +313,10 @@ class ContextManager:
         now = time.time()
         elapsed_since_last = (now - self._last_proactive_at) / 60  # minutes
 
-        if self._last_proactive_at > 0 and elapsed_since_last < self.cooldown_minutes:
+        # 活泼模式下缩短冷却时间（例如 10 分钟），默认模式 30 分钟
+        target_cooldown = 10 if self.mode == MODE_LIVELY else self.cooldown_minutes
+
+        if self._last_proactive_at > 0 and elapsed_since_last < target_cooldown:
             # Still in cooldown — user hasn't replied; stay quiet
             return
 

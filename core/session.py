@@ -46,16 +46,16 @@ class Session:
             })
         result += [
             {"role": m["role"], "content": m["content"]}
-            for m in self.messages[-max_messages:]
+            for m in self.messages[-max_messages:] if m["role"] != "visual_log"
         ]
         return result
 
     def estimate_tokens(self) -> int:
         """
         Rough token estimate: ~1 token per 3 characters (works for both CJK and Latin).
-        Includes the rolling summary in the estimate.
+        Includes the rolling summary and visual_log messages in the estimate.
         """
-        total_chars = sum(len(m.get("content", "")) for m in self.messages)
+        total_chars = sum(len(m.get("content", "")) for m in self.messages)  # includes visual_log
         total_chars += len(self.summary)
         return total_chars // 3
 
@@ -75,6 +75,18 @@ class Session:
         self.messages = []
         self.summary = ""
         self.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    def update_last_visual_log(self, time_str: str) -> None:
+        """Append a duration note to the last visual_log entry."""
+        for msg in reversed(self.messages):
+            if msg["role"] == "visual_log":
+                # Remove any existing duration note before re-appending
+                content = msg["content"]
+                if "（持续至" in content:
+                    content = content[:content.rfind("（持续至")].rstrip()
+                msg["content"] = content + f"（持续至 {time_str}）"
+                self.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+                return
 
     def to_dict(self) -> Dict[str, Any]:
         return {

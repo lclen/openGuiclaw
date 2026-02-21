@@ -30,6 +30,7 @@ BANNER = """
 HELP_TEXT = """
 【内置命令】
   /new              开启新对话（当前对话已保存）
+  /switch [id]      切换到指定的历史会话
   /sessions         列出历史会话
   /memory           查看所有记忆条目
   /skills           查看已加载的技能
@@ -123,8 +124,11 @@ def main():
     context = ContextManager(
         client=vision_client,
         vision_model=vision_model,
-        journal=agent.journal,
         interval_seconds=300, # 5 min
+        get_history_func=lambda: agent.sessions.current.get_history(max_messages=5),
+        get_visual_history_func=lambda: [m["content"] for m in agent.sessions.current.messages if m["role"] == "visual_log"],
+        add_visual_log_func=agent.add_visual_log,
+        update_visual_log_func=agent.update_visual_log
     )
     agent.context = context
     context.start()
@@ -169,6 +173,26 @@ def main():
         elif cmd == "/new":
             agent.sessions.new_session()
             print("  ✅ 新会话已开启。\n")
+            continue
+        elif cmd.startswith("/switch"):
+            parts = user_input.split(maxsplit=1)
+            if len(parts) < 2:
+                print("  ❌ 请提供会话 ID，例如：/switch session_123456789\n")
+            else:
+                session_id = parts[1].strip()
+                # 先保存当前
+                agent.sessions.save()
+                # 加载目标
+                s = agent.sessions.load(session_id)
+                if s:
+                    print(f"  ✅ 已切换到会话: [{session_id}]")
+                    print(f"  📅 创建时间: {s.created_at}")
+                    print(f"  💬 消息数: {len(s.messages)}\n")
+                    # 重置视觉感知的回复状态，确保新会话如果有变化能及时提醒
+                    if agent.context:
+                        agent.context.notify_user_replied()
+                else:
+                    print(f"  ❌ 找不到会话: {session_id}\n")
             continue
         elif cmd == "/sessions":
             sessions = agent.sessions.list_sessions()

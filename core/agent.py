@@ -479,6 +479,21 @@ class Agent:
             from plugins.plan_handler import plan_manager
             return plan_manager.complete_plan(summary)
 
+    def add_visual_log(self, content: str) -> None:
+        """
+        Record a visual perception log directly into the current active session.
+        """
+        self.sessions.current.add_message("visual_log", content)
+        self.sessions.save()
+
+    def update_visual_log(self, time_str: str) -> None:
+        """
+        Update the last visual_log entry with a duration note.
+        """
+        self.sessions.current.update_last_visual_log(time_str)
+        self.sessions.save()
+
+    def _build_builtin_skills(self) -> None:
         @self.skills.skill(
             name="list_skills",
             description="【技能商店】列出当前系统和项目本地安装的所有可通过文档自学的『外挂技能』（遵循 SKILL.md 规范）。遇到不熟悉的复合任务或想使用新工具时可首先调用此命令查看技能名录。",
@@ -742,6 +757,18 @@ class Agent:
             mem_ctx = self.memory.build_context(user_query)
             if mem_ctx:
                 parts.append(mem_ctx)
+
+        # Omni-Context: Inject recent visual logs for real-time situational awareness
+        try:
+            # Extract visual logs directly from the active session instead of the daily journal
+            v_logs = [m["content"] for m in self.sessions.current.messages if m["role"] == "visual_log"]
+            if v_logs:
+                recent_v = v_logs[-3:]
+                v_ctx = "# 最近视觉感知背景 (Recent Visual Awareness)\n" + "\n".join(recent_v)
+                v_ctx += "\n(注：以上是你通过'眼睛'观察到的用户实时状态，请根据这些信息进行更自然的回复。)"
+                parts.append(v_ctx)
+        except Exception:
+            pass
 
         # Inject active plan status (if any) — ensures agent never forgets its roadmap
         try:
@@ -1038,15 +1065,27 @@ class Agent:
             print(f"[System] {date_str} 没有找到聊天记录，跳过对话总结。")
             return
 
+        # 按时间戳排序，确保多个 Session 合并时时间线正确
+        all_conversations.sort(key=lambda m: m.get("timestamp", ""))
+
         # 2. 格式化对话内容 (截断过长的单条消息)
         lines = []
         for m in all_conversations:
-            role = "用户" if m["role"] == "user" else "AI"
+            role = m["role"]
+            if role == "user":
+                role_str = "用户"
+            elif role == "assistant":
+                role_str = "AI"
+            elif role == "visual_log":
+                role_str = "【系统旁白:视觉感知】"
+            else:
+                role_str = role
+                
             content = m.get("content", "")
             if len(content) > 500:
                 content = content[:500] + "...(截断)"
             ts = m.get("timestamp", "").split(" ")[-1] if " " in m.get("timestamp", "") else ""
-            lines.append(f"[{ts}] {role}: {content}")
+            lines.append(f"[{ts}] {role_str}: {content}")
 
         conversation_text = "\n".join(lines)
 
