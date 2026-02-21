@@ -41,12 +41,13 @@ from typing import Dict, List, Optional
 class PluginInfo:
     """Metadata and state for a loaded plugin."""
 
-    def __init__(self, name: str, path: Path, module):
-        self.name = name             # filename stem, e.g. "my_plugin"
+    def __init__(self, name: str, path: Path, module, registered_skills: list = None):
+        self.name = name
         self.path = path
         self.module = module
         self.loaded_at = time.strftime("%Y-%m-%d %H:%M:%S")
         self.enabled = True
+        self.skills: list = registered_skills or []  # skill names registered by this plugin
 
         # Read optional PLUGIN_INFO dict from the module
         meta = getattr(module, "PLUGIN_INFO", {})
@@ -185,10 +186,13 @@ class PluginManager:
                 del sys.modules[module_name]
                 return None
 
-            # Call register
+            # Call register — diff registry to find which skills were added
+            before_skills = set(self.skill_manager._registry.keys())
             module.register(self.skill_manager)
+            after_skills = set(self.skill_manager._registry.keys())
+            registered = list(after_skills - before_skills)
 
-            info = PluginInfo(stem, path, module)
+            info = PluginInfo(stem, path, module, registered_skills=registered)
             self._plugins[stem] = info
             print(f"  [OK] 插件加载: {info.display_name} v{info.version} ({stem}.py)")
             return stem
@@ -198,7 +202,14 @@ class PluginManager:
             return None
 
     def _unload_plugin(self, name: str) -> None:
-        """Remove plugin from registry and sys.modules."""
+        """Remove plugin from registry and sys.modules, and clean its skills."""
+        info = self._plugins.get(name)
+        if info:
+            # Remove all skills registered by this plugin from SkillManager
+            for skill_name in info.skills:
+                self.skill_manager._registry.pop(skill_name, None)
+            if info.skills:
+                print(f"[Plugin] 🧹 已清除插件 '{name}' 注册的 {len(info.skills)} 个技能: {info.skills}")
         module_name = f"plugins.{name}"
         sys.modules.pop(module_name, None)
         self._plugins.pop(name, None)

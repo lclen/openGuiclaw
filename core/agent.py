@@ -184,6 +184,7 @@ class Agent:
             
         # Scan local skills for Native Skill Cataloging
         self._local_skills_catalog = self._scan_local_skills()
+        self._catalog_dirty = False  # ③ cache freshness flag
         
         # Register built-in skills
         self._register_builtins()
@@ -216,13 +217,39 @@ class Agent:
                             metadata = yaml.safe_load(match.group(1))
                             name = metadata.get("name", skill_dir.name)
                             desc = metadata.get("description", "No description provided.")
-                            catalog[name] = {
-                                "description": desc,
-                                "path": str(skill_md_path)
-                            }
+                            # ② scripts/ subdir support
+                            scripts = []
+                            scripts_dir = skill_dir / "scripts"
+                            if scripts_dir.exists():
+                                scripts = [p.name for p in scripts_dir.iterdir() if p.is_file()]
+                            if name in catalog:
+                                existing_path = catalog[name]["path"]
+                                print(f"  [WARN] 技能名称冲突: '{name}' 已在 '{existing_path}' 注册，"
+                                      f"跳过 '{skill_md_path}'。请确保 SKILL.md 中 name 字段唯一。")
+                            else:
+                                catalog[name] = {
+                                    "description": desc,
+                                    "path": str(skill_md_path),
+                                    "scripts": scripts,
+                                }
                     except Exception as e:
                         print(f"  [WARN] Failed to parse {skill_md_path}: {e}")
+        self._catalog_dirty = False  # ③ mark cache as fresh
         return catalog
+
+    def _find_relevant_skills(self, user_query: str) -> list:
+        """① Return skill names whose description keywords match the user query."""
+        if not user_query or not self._local_skills_catalog:
+            return []
+        import re
+        # Extract meaningful words (>3 chars) from the query
+        words = set(w.lower() for w in re.split(r'[\s，。？！、（）]+', user_query) if len(w) > 3)
+        hits = []
+        for name, info in self._local_skills_catalog.items():
+            desc_lower = info["description"].lower()
+            if any(w in desc_lower for w in words):
+                hits.append(name)
+        return hits
 
     def _load_persona(self, path: str) -> str:
         p = Path(path)
@@ -535,10 +562,18 @@ class Agent:
             if skill_name not in self._local_skills_catalog:
                 return f"❌ 未找到名为 '{skill_name}' 的技能。请先调用 `list_skills` 确认名称。"
                 
-            path = self._local_skills_catalog[skill_name]["path"]
+            entry = self._local_skills_catalog[skill_name]
+            path = entry["path"]
             try:
                 content = Path(path).read_text(encoding="utf-8")
-                return f"📖 【{skill_name}】的详尽使用说明 (基于 \"{path}\"):\n\n{content}\n\n💡 提示：这通常是一份 CLI 命令行工具的使用说明手册，你可以仔细阅读其内容，然后使用系统内置的 `execute_command` 来实践文档中的命令闭环。"
+                result = f"📖 【{skill_name}】的详尽使用说明 (基于 \"{path}\"):\n\n{content}"
+                # ② Show available scripts if present
+                scripts = entry.get("scripts", [])
+                if scripts:
+                    scripts_dir = str(Path(path).parent / "scripts")
+                    result += f"\n\n📁 **可用脚本 (scripts/)**: {', '.join(scripts)}\n路径: `{scripts_dir}/`\n可使用 `execute_command` 直接运行这些脚本。"
+                result += "\n\n💡 提示：仔细阅读上述说明，然后使用系统内置的 `execute_command` 来实践文档中的命令。"
+                return result
             except Exception as e:
                 return f"❌ 无法读取 \"{path}\": {e}"
 
@@ -557,7 +592,10 @@ class Agent:
             category="system"
         )
         def install_skill(url: str) -> str:
-            return self._install_remote_skill(url)
+            result = self._install_remote_skill(url)
+            # ③ Invalidate catalog cache so next prompt reflects the new skill
+            self._catalog_dirty = True
+            return result
 
         @self.skills.skill(
             name="query_knowledge",
@@ -788,16 +826,26 @@ class Agent:
         skill_summary = self.skills.summary()
         parts.append(f"# 可用技能 (Skills)\n{skill_summary}")
 
-        # 注入动态外挂技能清单
-        # (确保获取最新)
-        self._local_skills_catalog = self._scan_local_skills()
+        # Inject local SKILL.md catalog so the model can self-navigate to detailed docs
         if self._local_skills_catalog:
-            parts.append("\n---\n")
-            parts.append("🛠️ 外部挂载技能名录 (Agent Skill Catalog)")
-            parts.append("说明: 系统检测到以下挂载技能。你可以调用 `get_skill_info` 获取其完整说明书，然后依葫芦画瓢地使用 `execute_command` 运行它们！")
-            for name, info in self._local_skills_catalog.items():
-                parts.append(f" - [{name}]: {info['description']}")
-            parts.append("---")
+            # ③ Re-scan only if dirty (e.g. after install_skill)
+            if self._catalog_dirty:
+                self._local_skills_catalog = self._scan_local_skills()
+            catalog_lines = ["# 本地外挂技能目录 (Local Skill Catalog)",
+                             "以下是已安装的外挂技能，当用户提到相关工具或任务时，请主动调用 `get_skill_info` 获取完整使用手册再操作："]
+            for sname, sinfo in self._local_skills_catalog.items():
+                scripts_note = f" *(含脚本: {', '.join(sinfo.get('scripts', []))})*" if sinfo.get('scripts') else ""
+                catalog_lines.append(f"- **{sname}**: {sinfo['description'][:120]}{scripts_note}")
+            parts.append("\n".join(catalog_lines))
+
+            # ① Intent matching: highlight relevant skills for current query
+            relevant = self._find_relevant_skills(user_query)
+            if relevant:
+                parts.append(
+                    "💡 **本次请求可能用到的外挂技能**: " + ", ".join(f"`{n}`" for n in relevant) +
+                    "\n→ 请先调用 `get_skill_info` 获取详细用法后再操作。"
+                )
+
 
         parts.append(_build_builtin_suffix())
         return "\n\n---\n\n".join(parts)
