@@ -34,9 +34,19 @@ def ensure_browser_running(port: int = 9222):
             return # 未找到可用浏览器，交给后续连接逻辑报错
             
         # 无论是 Edge 还是 Chrome，都统一使用隔离的调试环境，防止与用户的日常主浏览器进程冲突
-        # 注意：如果不加 --user-data-dir，若系统后台已有 Edge 进程存活，Edge 会直接忽略调试端口重用旧进程，导致死锁崩溃。
+        # 同时加入“伪装”参数和“渲染增强”参数，解决视频全屏失效和性能调优问题
         user_data_dir = r"D:\browser_debug"
-        browser_cmd = rf'"{browser_path}" --remote-debugging-port={port} --user-data-dir="{user_data_dir}"'
+        args = [
+            f"--remote-debugging-port={port}",
+            f'--user-data-dir="{user_data_dir}"',
+            "--disable-blink-features=AutomationControlled", # 解决“自动化受控模式”下的权限限制（如全屏）
+            "--ignore-gpu-blocklist",                          # 开启硬加速
+            "--enable-gpu-rasterization",
+            "--start-maximized",
+            "--no-first-run",
+            "--no-default-browser-check"
+        ]
+        browser_cmd = f'"{browser_path}" ' + " ".join(args)
         
         try:
             # 使用完全脱离当前终端的方式运行
