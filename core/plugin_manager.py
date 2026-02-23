@@ -138,7 +138,7 @@ class PluginManager:
         return reloaded
 
     def unload(self, name: str) -> bool:
-        """Unload a plugin (removes its skills? No — skills stay until restart)."""
+        """Unload a plugin and immediately remove all skills it registered."""
         if name not in self._plugins:
             print(f"[Plugin] [WARN] 插件 '{name}' 未加载。")
             return False

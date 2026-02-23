@@ -79,15 +79,21 @@ class SkillManager:
     def list_enabled(self) -> List[SkillDefinition]:
         return [s for s in self._registry.values() if s.enabled]
 
-    def execute(self, name: str, params: Dict[str, Any]) -> str:
-        """Execute a skill by name with given parameters."""
+    async def execute(self, name: str, params: Dict[str, Any]) -> str:
+        """Execute a skill by name with given parameters. Supports both sync and async handlers."""
+        import asyncio
         skill = self._registry.get(name)
         if skill is None:
             return f"[SkillManager] Unknown skill: '{name}'"
         if not skill.enabled:
             return f"[SkillManager] Skill '{name}' is disabled."
         try:
-            result = skill.handler(**params)
+            if asyncio.iscoroutinefunction(skill.handler):
+                result = await skill.handler(**params)
+            else:
+                result = skill.handler(**params)
+                if asyncio.iscoroutine(result):
+                    result = await result
             return str(result) if result is not None else "Done."
         except Exception as e:
             return f"[SkillManager] Error executing '{name}': {e}"

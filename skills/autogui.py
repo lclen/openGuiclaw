@@ -114,6 +114,22 @@ def _execute_action(action_type: str, params: dict) -> str:
 def register(manager: SkillManager) -> None:
     """Register all AutoGUI skills into the provided SkillManager."""
 
+    # Initialize the GUI model client once at registration time
+    _gui_client = None
+    _gui_model = "qwen3.5-plus"
+    try:
+        with open("config.json", "r", encoding="utf-8") as _f:
+            _cfg = json.load(_f)
+        _gui_cfg = _cfg.get("autogui", {})
+        if _gui_cfg.get("api_key"):
+            _gui_client = OpenAI(
+                base_url=_gui_cfg.get("base_url"),
+                api_key=_gui_cfg.get("api_key"),
+            )
+            _gui_model = _gui_cfg.get("model", _gui_model)
+    except Exception as _e:
+        print(f"  [WARN] autogui: 无法预加载 GUI 模型配置: {_e}")
+
     @manager.skill(
         name="autogui_action",
         description=(
@@ -160,27 +176,13 @@ def register(manager: SkillManager) -> None:
     )
     def screenshot_and_act(goal: str) -> str:
         try:
+            if not _gui_client:
+                return "错误: 未配置 autogui 专属模型 API Key，请检查 config.json 中的 autogui 配置。"
+
             # 1. Capture
             b64_img = _capture_screen()
-            
-            # 2. Load Config
-            config_path = Path("config.json")
-            if not config_path.exists():
-                return "错误: 找不到配置文件 config.json"
-            
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            
-            gui_cfg = config.get("autogui", {})
-            if not gui_cfg.get("api_key"):
-                return "错误: 未配置 autogui 专属模型 API Key"
-            
-            # 3. Call Model
-            client = OpenAI(
-                base_url=gui_cfg.get("base_url"),
-                api_key=gui_cfg.get("api_key")
-            )
-            
+
+            # 2. Call Model (client pre-initialized at registration time)
             system_prompt = (
                 "你是一个 GUI 自动化助手。你的任务是根据用户的指令，通过分析屏幕截图来完成用户的单步任务。\n"
                 "每次响应必须返回一个 JSON 对象，格式严格如下：\n"
@@ -209,8 +211,8 @@ def register(manager: SkillManager) -> None:
                 "使用 Win 键打开开始菜单，然后输入软件名称搜索"
             )
             
-            response = client.chat.completions.create(
-                model=gui_cfg.get("model", "qwen3.5-plus"),
+            response = _gui_client.chat.completions.create(
+                model=_gui_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {

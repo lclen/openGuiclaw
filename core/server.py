@@ -5,7 +5,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, BackgroundTasks
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
@@ -75,7 +75,29 @@ async def lifespan(app: FastAPI):
         agent = Agent(config_path=config_path, data_dir="data", auto_evolve=True)
         agent.event_queue = _ctx_event_queue  # Thread-safe queue for broadcasting system events
         
-        # 3. Init Plugins
+        # 3. Load core skills (previously only in main.py)
+        try:
+            from skills import basic
+            agent.register_skill_module(basic)
+            logger.info("  [OK] 技能加载: basic")
+        except Exception as e:
+            logger.warning(f"  [WARN] Basic 技能加载失败: {e}")
+
+        try:
+            from skills import autogui
+            agent.register_skill_module(autogui)
+            logger.info("  [OK] 技能加载: autogui")
+        except Exception as e:
+            logger.warning(f"  [WARN] AutoGUI 加载失败: {e}")
+
+        try:
+            from skills import web_search
+            agent.register_skill_module(web_search)
+            logger.info("  [OK] 技能加载: web_search")
+        except Exception as e:
+            logger.warning(f"  [WARN] Web 技能加载失败: {e}")
+
+        # 4. Init Plugins
         plugin_manager = PluginManager(skill_manager=agent.skills, plugins_dir="plugins")
         plugin_manager.load_all()
         
@@ -102,7 +124,7 @@ async def lifespan(app: FastAPI):
             get_visual_history_func=get_visual_history,
             update_visual_log_func=update_visual_log,
             get_history_func=get_chat_history,
-            interval_seconds=agent.config.get("vision", {}).get("interval", 300),
+            interval_minutes=agent.config.get("proactive", {}).get("interval_minutes", 5),
             proactive_config=agent.config.get("proactive", {}),
         )
         agent.context = context_manager
@@ -166,30 +188,7 @@ async def health_check():
     """Simple health check endpoint."""
     return {"status": "ok"}
 
-@app.get("/api/events")
-async def sse_events(request: Request):
-    """
-    Global Server-Sent Events (SSE) endpoint.
-    Streams context updates, visual logs, and proactive messages to the connected frontend.
-    """
-    async def event_generator():
-        q = asyncio.Queue()
-        with _sse_lock:
-            _sse_subscribers.add(q)
-        try:
-            while True:
-                # If client closes connection, this will raise an exception eventually
-                if await request.is_disconnected():
-                    break
-                event_data = await q.get()
-                yield dict(data=json.dumps(event_data, ensure_ascii=False))
-        except asyncio.CancelledError:
-            pass
-        finally:
-            with _sse_lock:
-                _sse_subscribers.discard(q)
-            
-    return EventSourceResponse(event_generator())
+
 
 @app.get("/api/config")
 async def get_config():
@@ -208,21 +207,62 @@ async def update_config(request: Request):
     """Update config.json and reload applicable parts of the agent."""
     try:
         new_config = await request.json()
-        
+
+        # Schema validation: must be a dict and contain known top-level keys only
+        _ALLOWED_KEYS = {"proactive", "browser_choice", "model", "api_key", "base_url",
+                         "persona", "memory", "skills", "plugins", "journal", "knowledge_graph"}
+        if not isinstance(new_config, dict):
+            raise HTTPException(status_code=400, detail="Config must be a JSON object")
+        unknown_keys = set(new_config.keys()) - _ALLOWED_KEYS
+        if unknown_keys:
+            raise HTTPException(status_code=400, detail=f"Unknown config keys: {unknown_keys}")
+
+        # Validate proactive sub-object if present
+        if "proactive" in new_config:
+            p = new_config["proactive"]
+            if not isinstance(p, dict):
+                raise HTTPException(status_code=400, detail="proactive must be an object")
+            for field in ("interval_minutes", "cooldown_minutes"):
+                if field in p and p[field] is not None and not isinstance(p[field], (int, float)):
+                    raise HTTPException(status_code=400, detail=f"proactive.{field} must be a number or null")
+
         # Save to file
         with open("config.json", "w", encoding="utf-8") as f:
             json.dump(new_config, f, indent=4, ensure_ascii=False)
-            
+
         # Dynamically reload proactive config
         if "agent" in app_state:
             app_state["agent"].config = new_config
         if "context_manager" in app_state:
             app_state["context_manager"].reload_config(new_config.get("proactive", {}))
-        
+
         return {"status": "success", "message": "Config updated"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update config: {str(e)}")
+
+@app.post("/api/context/poke")
+async def poke_context():
+    """Manually trigger a proactive vision analysis cycle."""
+    if "context_manager" not in app_state:
+        raise HTTPException(status_code=400, detail="ContextManager not initialized")
+    app_state["context_manager"].poke()
+    return {"status": "success", "message": "Poked"}
+
+@app.post("/api/sandbox/clear")
+async def clear_sandbox():
+    """Clear all active python sandboxes."""
+    try:
+        from plugins.sandbox_repl import _sandboxes
+        count = len(_sandboxes)
+        for sb in list(_sandboxes.values()):
+            sb.close()
+        _sandboxes.clear()
+        return {"status": "ok", "message": f"成功清理了 {count} 个存活的沙箱实例。"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/status")
 async def get_status():
@@ -257,6 +297,57 @@ async def chat_sync(request: ChatRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
+
+@app.post("/api/chat/upload")
+async def chat_upload(file: UploadFile = File(...), prompt: str = Form(default="")):
+    """
+    Accept a file (image or plain text) from the frontend, convert it to a
+    multimodal message, and stream the agent response via SSE.
+
+    Supported types:
+      - image/*  → base64-encoded image_url content block
+      - text/*   → inline text content block
+    """
+    agent = app_state.get("agent")
+    if not agent:
+        raise HTTPException(status_code=500, detail="Agent not initialized")
+
+    content_type = (file.content_type or "").lower()
+    raw = await file.read()
+
+    if content_type.startswith("image/"):
+        import base64
+        b64 = base64.b64encode(raw).decode("utf-8")
+        data_url = f"data:{content_type};base64,{b64}"
+        user_content = [
+            {"type": "image_url", "image_url": {"url": data_url}},
+            # Always include a text block; use user's prompt if provided,
+            # otherwise a neutral fallback so the vision model has a task.
+            {"type": "text", "text": prompt if prompt.strip() else "请描述这张图片的内容。"},
+        ]
+    elif content_type.startswith("text/") or file.filename.lower().endswith((".txt", ".md", ".csv", ".log")):
+        try:
+            text_body = raw.decode("utf-8", errors="replace")
+        except Exception:
+            text_body = raw.decode("latin-1", errors="replace")
+        user_content = (
+            f"【文件内容：{file.filename}】\n```\n{text_body[:8000]}\n```\n\n"
+            + (prompt or "请分析以上文件内容。")
+        )
+    else:
+        raise HTTPException(status_code=415, detail=f"Unsupported file type: {content_type}")
+
+    async def event_generator():
+        try:
+            async for chunk in agent.chat_stream(user_content):
+                yield dict(data=chunk)
+            yield dict(data="[DONE]")
+        except Exception as e:
+            logger.error(f"Upload stream error: {e}")
+            yield dict(data=json.dumps({"type": "error", "content": str(e)}))
+
+    return EventSourceResponse(event_generator())
+
 
 @app.post("/api/chat/stream")
 async def chat_stream(request: ChatRequest):
@@ -471,16 +562,20 @@ async def upload_vrm_model(file: UploadFile = File(...)):
 @app.delete("/api/vrm/models/{filename}")
 async def delete_vrm_model(filename: str):
     """Delete a VRM model from the static/models directory."""
-    models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "models")
-    file_path = os.path.join(models_dir, filename)
-    
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Model file not found")
-        
-    # Basic security check: only delete .vrm files within the models directory
+    models_dir = os.path.realpath(
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "models")
+    )
+    file_path = os.path.realpath(os.path.join(models_dir, filename))
+
+    # Security: reject path traversal and non-.vrm files
+    if not file_path.startswith(models_dir + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid path")
     if not filename.lower().endswith('.vrm'):
         raise HTTPException(status_code=400, detail="Invalid file type")
-        
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Model file not found")
+
     try:
         os.remove(file_path)
         logger.info(f"Deleted model file: {file_path}")

@@ -1,0 +1,126 @@
+<!-- Global System Settings Panel -->
+<div x-show="activePanel === 'config'" class="flex flex-col h-full">
+    <div class="px-4 py-3 border-b border-white/10">
+        <p class="text-white font-semibold text-sm">系统配置</p>
+        <p class="text-white/40 text-xs mt-0.5">运行环境与浏览器偏好设置</p>
+    </div>
+    <div class="flex-1 overflow-y-auto custom-scrollbar px-4 py-3 gap-3">
+
+        <!-- Browser Selection -->
+        <div class="mb-6">
+            <p class="text-blue-300 text-xs font-semibold mb-2">默认浏览器</p>
+            <div class="flex gap-2 p-1 bg-white/5 rounded-xl border border-white/10">
+                <button @click="updateBrowserSetting('edge')"
+                    :class="config.browser_choice === 'edge' ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' : 'text-white/40 hover:text-white/60 border-transparent'"
+                    class="flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all border flex items-center justify-center gap-2">
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z" />
+                        <path d="M12 6a6 6 0 1 0 6 6 6 6 0 0 0-6-6zm0 10a4 4 0 1 1 4-4 4 4 0 0 1-4 4z" />
+                    </svg>
+                    Edge
+                </button>
+                <button @click="updateBrowserSetting('chrome')"
+                    :class="config.browser_choice === 'chrome' ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' : 'text-white/40 hover:text-white/60 border-transparent'"
+                    class="flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all border flex items-center justify-center gap-2">
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                    </svg>
+                    Chrome
+                </button>
+            </div>
+            <p class="text-white/30 text-[10px] mt-2">修改后将在下一次通过大模型执行浏览器自动化操作时生效，前提是你的系统中安装了对应的浏览器。</p>
+        </div>
+
+        <!-- Proactive Chat Settings -->
+        <div class="mb-6">
+            <p class="text-blue-300 text-xs font-semibold mb-2">主动感知与活泼度</p>
+
+            <!-- Interval -->
+            <div class="mb-5">
+                <div class="flex justify-between items-center mb-1">
+                    <div class="flex items-center gap-2">
+                        <span class="text-white/80 text-[11px]">视觉检测心跳频率</span>
+                        <span class="text-white/25 text-[9px]" x-show="proactiveDefaults[config.proactive.mode]">
+                            (策略推荐: <span
+                                x-text="proactiveDefaults[config.proactive.mode].interval_minutes === null ? '禁用' : proactiveDefaults[config.proactive.mode].interval_minutes + 'm'"></span>)
+                        </span>
+                    </div>
+                    <span class="text-blue-400 text-[11px]"
+                        x-text="config.proactive.interval_minutes === null ? '已禁用' : config.proactive.interval_minutes + ' 分钟'"></span>
+                </div>
+                <input type="range" min="1" max="60" step="1"
+                    x-model.number="config.proactive.interval_minutes" @change="saveGlobalConfig()"
+                    class="w-full accent-blue-500 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer">
+                <div class="flex justify-between text-white/30 text-[9px] mt-1 pr-1">
+                    <span>1min</span>
+                    <span>60min</span>
+                </div>
+            </div>
+
+            <!-- Cooldown -->
+            <div class="mb-5">
+                <div class="flex justify-between items-center mb-1">
+                    <div class="flex items-center gap-2">
+                        <span class="text-white/80 text-[11px]">主动发话冷却时间</span>
+                        <span class="text-white/25 text-[9px]" x-show="proactiveDefaults[config.proactive.mode]">
+                            (策略推荐: <span
+                                x-text="proactiveDefaults[config.proactive.mode].cooldown_minutes === null ? '禁用' : proactiveDefaults[config.proactive.mode].cooldown_minutes + 'm'"></span>)
+                        </span>
+                    </div>
+                    <span class="text-blue-400 text-[11px]"
+                        x-text="config.proactive.cooldown_minutes === null ? '已禁用' : config.proactive.cooldown_minutes + ' 分钟'"></span>
+                </div>
+                <input type="range" min="1" max="60" step="1"
+                    x-model.number="config.proactive.cooldown_minutes" @change="saveGlobalConfig()"
+                    class="w-full accent-blue-500 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer">
+                <div class="flex justify-between text-white/30 text-[9px] mt-1 pr-1">
+                    <span>1m (话痨)</span>
+                    <span>60m (社恐)</span>
+                </div>
+            </div>
+
+            <!-- Mode -->
+            <div class="mb-4">
+                <p class="text-white/80 text-[11px] mb-2">交互干预策略 (点击切换推荐预设)</p>
+                <div class="flex gap-2 p-1 bg-white/5 rounded-xl border border-white/10">
+                    <template x-for="m in ['silent', 'normal', 'lively']" :key="m">
+                        <button @click="setProactiveMode(m)"
+                            :class="config.proactive.mode === m ? 'bg-blue-500/20 text-blue-300 border-blue-500/30 shadow-sm' : 'text-white/40 hover:text-white/60 border-transparent'"
+                            class="flex-1 py-1.5 px-2 rounded-lg text-xs font-medium transition-all border flex items-center justify-center">
+                            <span x-text="m === 'silent' ? '静默' : (m === 'normal' ? '正常' : '活泼')"></span>
+                        </button>
+                    </template>
+                </div>
+                <p class="text-white/30 text-[10px] mt-2 leading-relaxed">
+                    <span x-show="config.proactive.mode === 'silent'">静默: 禁用视觉检测与主动发话。</span>
+                    <span x-show="config.proactive.mode === 'normal'">正常: 默认频率与平衡冷却，由模型决定是否开口。</span>
+                    <span x-show="config.proactive.mode === 'lively'">活泼: 高频感知，极短冷却，极具互动性。</span>
+                </p>
+            </div>
+
+            <!-- Verbose Toggle -->
+            <div class="flex items-center justify-between mt-3 mb-1 px-1 bg-white/5 p-2 rounded-xl border border-white/5">
+                <span class="text-white/80 text-[11px]">在后端终端显示感知日志</span>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" x-model="config.proactive.verbose" @change="saveGlobalConfig()"
+                        class="sr-only peer">
+                    <div
+                        class="w-8 h-4 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-500">
+                    </div>
+                </label>
+            </div>
+
+            <!-- Poke Button -->
+            <div class="mt-4">
+                <button @click="pokeAI()"
+                    class="w-full py-2.5 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 rounded-xl text-blue-300 text-xs font-medium transition-all flex items-center justify-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+                    </svg>
+                    戳一下 AI (强制立刻搭话)
+                </button>
+            </div>
+        </div>
+    </div>
+</div>

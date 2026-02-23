@@ -32,7 +32,9 @@ def register(manager):
     def get_weather(city: str) -> str:
         try:
             import urllib.request
-            url = f"https://wttr.in/{city}?format=3&lang=zh"
+            import urllib.parse
+            city_encoded = urllib.parse.quote(city)
+            url = f"https://wttr.in/{city_encoded}?format=3&lang=zh"
             req = urllib.request.Request(url, headers={"User-Agent": "curl/7.0"})
             with urllib.request.urlopen(req, timeout=5) as resp:
                 return resp.read().decode("utf-8").strip()

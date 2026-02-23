@@ -76,14 +76,26 @@ class App {
                 console.warn('[App] 读取服务端偏好失败，使用本地缓存:', e);
             }
 
-            const loadSuccess = await this.vrmManager.loadModel(modelToLoad, { autoPlay: true });
+            let loadSuccess;
+            try {
+                loadSuccess = await this.vrmManager.loadModel(modelToLoad, { autoPlay: true });
+            } catch (e) {
+                console.error("[App] VRM 模型加载失败:", e);
+                // 向用户显示错误提示
+                const errEl = document.getElementById('vrm-load-error');
+                if (errEl) {
+                    errEl.textContent = `VRM 模型加载失败: ${e.message}`;
+                    errEl.style.display = 'block';
+                }
+            }
 
             if (loadSuccess) {
-                console.log("[App] VRM 模型加载成功！");
+                console.log("[App] VRM 模型加载成功。");
 
                 // If there were no server preferences loaded, apply the default optimized camera/model placement
-                if (!hasServerPreferences && this.vrmManager.scene && this.vrmManager.camera) {
-                    const scene = this.vrmManager.scene;
+                // Note: apply to the VRM model's scene node, not the Three.js Scene root
+                if (!hasServerPreferences && this.vrmManager.currentModel?.vrm?.scene && this.vrmManager.camera) {
+                    const scene = this.vrmManager.currentModel.vrm.scene;
                     const cam = this.vrmManager.camera;
                     // Apply user requested default positions
                     scene.position.set(0.017, -0.076, -0.002);
@@ -112,12 +124,14 @@ class App {
 
     initEvents() {
         // Alpine.js 数据监听与 UI 交互代理通过 Alpine 完成
-        // 这里可以绑定原生的键盘按下事件
+        // 这里绑定原生键盘事件（使用 keydown，keypress 已废弃）
         if (this.chatInput) {
-            this.chatInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    // 触发外部抛出的发送逻辑
-                    document.dispatchEvent(new CustomEvent('app:send-message', { detail: this.chatInput.value }));
+            this.chatInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    const value = this.chatInput.value;
+                    this.chatInput.value = '';  // 清空输入框，防止重复发送
+                    document.dispatchEvent(new CustomEvent('app:send-message', { detail: value }));
                 }
             });
         }

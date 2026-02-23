@@ -15,7 +15,8 @@ class MemoryItem:
     """A single memory record."""
 
     def __init__(self, content: str, tags: List[str] = None):
-        self.id = f"mem_{int(time.time() * 1000)}"
+        import uuid
+        self.id = f"mem_{uuid.uuid4().hex[:12]}"
         self.content = content
         self.tags = tags or []
         self.timestamp = time.time()

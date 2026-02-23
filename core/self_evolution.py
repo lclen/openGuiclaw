@@ -256,8 +256,9 @@ class SelfEvolution:
                 temperature=0.3,
             ) or "{}"
             if "```" in text:
-                text = text.split("```")[1] if "```" in text else text
-                text = text.lstrip("json").strip()
+                import re as _re
+                text = _re.sub(r"^```[a-z]*\n?", "", text.strip())
+                text = _re.sub(r"\n?```$", "", text).strip()
 
             result = json.loads(text)
             action = result.get("action", "none")

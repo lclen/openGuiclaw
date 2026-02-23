@@ -89,10 +89,9 @@ class KnowledgeGraph:
             r = item.get("relation", "").strip()
             o = item.get("object", "").strip()
             if s and r and o:
-                existing = [t for t in self._triples
-                            if t.subject == s and t.relation == r and t.object == o]
-                if not existing:
-                    self.add(s, r, o, source)
+                before = len(self._triples)
+                self.add(s, r, o, source)
+                if len(self._triples) > before:
                     count += 1
         return count
 

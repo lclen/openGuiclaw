@@ -144,6 +144,9 @@ class Agent:
         
         self.max_tokens = api_cfg.get("max_tokens", 8000) # Increased default max_tokens
         self.temperature = api_cfg.get("temperature", 0.7)
+        # context_window: the model's total context length (input + output tokens).
+        # Used to decide when to trigger rolling summary. Qwen models support 128k.
+        self.context_window = api_cfg.get("context_window", 128000)
 
         # Load persona
         self.identities_dir = Path("data/identities")
@@ -325,10 +328,14 @@ class Agent:
         return "你是一个有帮助的 AI 助理。"
     
     def _load_habits(self) -> None:
-        if self.habits_path.exists():
-            self.interaction_habits = self.habits_path.read_text(encoding="utf-8")
-        else:
+        if not self.habits_path.exists():
             self.interaction_habits = ""
+            return
+        mtime = self.habits_path.stat().st_mtime
+        if mtime == getattr(self, "_habits_mtime", None):
+            return  # file unchanged, skip disk read
+        self.interaction_habits = self.habits_path.read_text(encoding="utf-8")
+        self._habits_mtime = mtime
     
     def switch_persona(self, name: str) -> bool:
         """Switch to a different persona file in the identities directory."""
@@ -530,63 +537,7 @@ class Agent:
                 return f"✅ 记忆 {memory_id} 已删除。"
             return f"❌ 未找到 ID 为 {memory_id} 的记忆。"
 
-        # 计划管理器 (Plan)
-        @self.skills.skill(
-            name="create_plan",
-            description="【系统指令】当用户请求极其复杂，需要拆解为多个子步骤时，调用此命令生成并锁定一个具有明确步骤规划的长期任务流。创建计划后，AI 会进入计划模式，系统会强制要求你在接下来的每一步执行通过 `update_plan_step` 来汇报进度和状态，除非所有步骤完成。",
-            parameters={
-                "properties": {
-                    "goal": {"type": "string", "description": "整个计划的最终目标描述"},
-                    "steps": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "初始拆解的任务步骤列表，必须是大颗粒度的逻辑节点。"
-                    }
-                },
-                "required": ["goal", "steps"]
-            }
-        )
-        def create_plan(goal: str, steps: list[str]) -> str:
-            from plugins.plan_handler import plan_manager
-            plan_id = plan_manager.create_plan(goal, steps)
-            return f"✅ 计划创建成功 (ID: {plan_id})。当前状态已自动注入 System Prompt，请基于该计划大纲执行第一步。"
-
-        @self.skills.skill(
-            name="update_plan_step",
-            description="【系统指令】在 `create_plan` 开启后，用来更新当前执行到了哪一步，或者动态插入新发现的子步骤。严禁凭空滥用，只有当一个复杂阶段收尾或卡壳时调用。",
-            parameters={
-                "properties": {
-                    "completed_step": {"type": "string", "description": "刚刚完成的步骤描述或反馈（如果只是报错或添加新步骤可留空）"},
-                    "next_step": {"type": "string", "description": "接下来要执行的步骤"},
-                    "new_sub_steps": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "如果在执行中发现需要拆分更多子步骤，在这里以数组形式传入"
-                    }
-                },
-                "required": ["next_step"]
-            }
-        )
-        def update_plan_step(next_step: str, completed_step: str = "", new_sub_steps: list[str] = None) -> str:
-            from plugins.plan_handler import plan_manager
-            return plan_manager.update_step(next_step, completed_step, new_sub_steps)
-
-        @self.skills.skill(
-            name="complete_plan",
-            description="【系统指令】当 `create_plan` 开启的任务流中，所有步骤（含临时插入的子步骤）均已全部完成，且最终目标已经达成时调用此命令，用于释放计划状态，生成结案总结并回归日常模式。",
-            parameters={
-                "properties": {
-                    "summary": {
-                        "type": "string", 
-                        "description": "对整个计划执行过程的总结，包含核心成果、遇到的主要问题及解决方法。"
-                    }
-                },
-                "required": ["summary"]
-            }
-        )
-        def complete_plan(summary: str) -> str:
-            from plugins.plan_handler import plan_manager
-            return plan_manager.complete_plan(summary)
+        # 计划管理工具由 plugins/plan_handler.py 插件统一注册，此处不重复定义。
 
     def add_visual_log(self, content: str) -> None:
         """
@@ -877,7 +828,7 @@ class Agent:
                     parts.append(mem_ctx)
             except Exception as e:
                 pass
-        elif user_query and not self.memory.vector_store:
+        elif user_query and not self.memory._vector_store:
             # Fallback to standard context if no vector store (which just takes the last N memories)
             mem_ctx = self.memory.build_context(user_query)
             if mem_ctx:
@@ -1013,9 +964,14 @@ class Agent:
                         print(f"  ❌ [Vision Proxy] 图像解析失败: {e}")
                         # Fallback to passing the array directly to the main model if the proxy fails
                         pass
+                        
                 else:
                     # Unified Model Mode: The main model is omni-modal, handle it directly
                     print(f"  👁️ [Omni-Modal] 主模型将直接吞入多模态数据并保持 Tool 权限...")
+
+        # Add user message to session persistence immediately
+        session.add_message("user", user_input)
+        self.sessions.save()
 
         for _ in range(max_tool_rounds):
             response = self.client.chat.completions.create(
@@ -1042,6 +998,14 @@ class Agent:
                     except (json.JSONDecodeError, TypeError):
                         tc_dict["function"]["arguments"] = "{}"
                 messages.append(assistant_dict)
+                # Persist intermediate assistant message (with tool_calls) to session
+                session.add_message(
+                    role="assistant",
+                    content=msg.content or "",
+                    tool_calls=assistant_dict.get("tool_calls"),
+                    thinking=getattr(msg, "reasoning_content", "") or ""
+                )
+                self.sessions.save()
 
                 # Execute each tool call
                 round_had_error = False
@@ -1055,7 +1019,13 @@ class Agent:
                         params = {}
 
                     print(f"  [Tool] {name}({params})")
-                    result = self.skills.execute(name, params)
+
+                    import asyncio
+                    try:
+                        result = asyncio.run(self.skills.execute(name, params))
+                    except Exception as e:
+                        result = f"❌ 执行出错: {e}"
+
                     # Ensure result is a plain string and not excessively long
                     if not isinstance(result, str):
                         result = str(result)
@@ -1064,12 +1034,16 @@ class Agent:
                     if result.strip().startswith("❌") or "Traceback (most recent call last):" in result:
                         round_had_error = True
 
-                    messages.append({
+                    tool_msg = {
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "name": name,
                         "content": result,
-                    })
+                    }
+                    messages.append(tool_msg)
+                    # Persist tool result to session
+                    session.add_message(**tool_msg)
+                    self.sessions.save()
                 
                 if round_had_error:
                     consecutive_errors += 1
@@ -1090,10 +1064,10 @@ class Agent:
 
         if final_response is None:
             final_response = "（已完成工具操作，无额外回复。）"
-
-        # Persist to session
-        session.add_message("user", user_input)
-        session.add_message("assistant", final_response)
+        else:
+            # Final text response
+            session.add_message("assistant", final_response)
+            
         self.sessions.save()
 
         # Check triggers
@@ -1120,6 +1094,21 @@ class Agent:
         ]
         messages.extend(session.get_history())
         messages.append({"role": "user", "content": user_input})
+        
+        # Persist user message — for multimodal input, store a text-only summary
+        # to avoid bloating the session JSON with base64 image data.
+        if isinstance(user_input, list):
+            text_parts = [item.get("text", "") for item in user_input if isinstance(item, dict) and item.get("type") == "text"]
+            has_image = any(isinstance(item, dict) and item.get("type") == "image_url" for item in user_input)
+            user_text = "".join(text_parts).strip()
+            if has_image:
+                summary = f"[图片] {user_text}" if user_text else "[图片]"
+            else:
+                summary = user_text or "（非文本内容）"
+            session.add_message("user", summary)
+        else:
+            session.add_message("user", user_input)
+        self.sessions.save()
 
         tools = self.skills.get_tool_definitions()
         
@@ -1139,49 +1128,78 @@ class Agent:
             if "ts" not in event_dict:
                 import time
                 event_dict["ts"] = time.strftime("%H:%M:%S")
-            session.add_message("debug_log", json.dumps(event_dict, ensure_ascii=False))
-            self.sessions.save()
+            # 过滤掉内容很长且不需要长期记录在硬盘上的片段，减轻 session json 负担
+            if event_dict.get("type") not in ("thinking_chunk", "message_chunk", "message"):
+                session.add_message("debug_log", json.dumps(event_dict, ensure_ascii=False))
+                self.sessions.save()
             return json.dumps(event_dict, ensure_ascii=False)
         
         # --- Isolated Vision Proxy Analysis ---
         if isinstance(user_input, list):
             has_image = any(isinstance(item, dict) and item.get("type") == "image_url" for item in user_input)
-            if has_image and self.image_analyzer_client is not self.client:
-                yield _yield_event({"type": "status", "content": f"正在请求视觉分析模型 {self.image_analyzer_model}..."})
-                try:
-                    proxy_messages = [{"role": "user", "content": user_input}]
-                    loop = asyncio.get_event_loop()
-                    proxy_resp = await loop.run_in_executor(
-                        None, 
-                        lambda: self.image_analyzer_client.chat.completions.create(
-                            model=self.image_analyzer_model,
-                            messages=proxy_messages,
-                            max_tokens=2000,
-                            temperature=0.3
-                        )
-                    )
-                    image_description = proxy_resp.choices[0].message.content or "未能识别图片内容。"
-                    
-                    original_prompt = "阅读这张图片"
-                    for item in user_input:
-                        if isinstance(item, dict) and item.get("type") == "text":
-                            original_prompt = item.get("text", original_prompt)
-                            
-                    new_user_input = f"【视觉感知代理的图像分析报告】\n{image_description}\n\n【用户的原始请求】\n{original_prompt}"
-                    messages[-1] = {"role": "user", "content": new_user_input}
-                    yield _yield_event({"type": "status", "content": "视觉分析完成，交由主中枢处理..."})
-                except Exception as e:
-                    yield _yield_event({"type": "error", "content": f"图像解析失败: {e}"})
+            if has_image:
+                if self.image_analyzer_client is not self.client:
+                    # Dedicated vision model path:
+                    # 1. Send image + user's original question to the vision model
+                    # 2. Vision model returns a focused description
+                    # 3. Replace messages[-1] with: description + user question + history intact
+                    yield _yield_event({"type": "status", "content": f"正在请求视觉分析模型 {self.image_analyzer_model}..."})
+                    try:
+                        # Extract user's text prompt (may be empty)
+                        original_prompt = ""
+                        for item in user_input:
+                            if isinstance(item, dict) and item.get("type") == "text":
+                                original_prompt = item.get("text", "").strip()
+                                break
 
+                        # Send only the image to the vision model for description
+                        image_items = [item for item in user_input if isinstance(item, dict) and item.get("type") == "image_url"]
+                        proxy_content = image_items + [{"type": "text", "text": "请详细描述这张图片的内容。"}]
+
+                        loop = asyncio.get_event_loop()
+                        proxy_resp = await loop.run_in_executor(
+                            None,
+                            lambda: self.image_analyzer_client.chat.completions.create(
+                                model=self.image_analyzer_model,
+                                messages=[{"role": "user", "content": proxy_content}],
+                                max_tokens=2000,
+                                temperature=0.3
+                            )
+                        )
+                        image_description = proxy_resp.choices[0].message.content or "未能识别图片内容。"
+
+                        # Build the message for the main model:
+                        # history is already in messages[1:-1]; replace the last user turn
+                        combined = (
+                            f"【图片分析结果】\n{image_description}"
+                            + (f"\n\n【用户问题】\n{original_prompt}" if original_prompt else "")
+                        )
+                        messages[-1] = {"role": "user", "content": combined}
+                        yield _yield_event({"type": "status", "content": "视觉分析完成，交由主模型处理..."})
+                    except Exception as e:
+                        yield _yield_event({"type": "error", "content": f"图像解析失败: {e}"})
+                        return  # abort — don't send raw base64 to main model on proxy failure
+                else:
+                    # Same model handles both vision and reasoning (e.g. Qwen-VL-Max):
+                    # Send image + text + full history directly — no proxy needed.
+                    yield _yield_event({"type": "status", "content": "图片已就绪，正在分析..."})
+                    # messages[-1] already contains the multimodal list — pass through as-is
         tool_errors_history = []
+        full_assistant_content = ""
 
         for round_idx in range(max_tool_rounds):
-            yield _yield_event({"type": "status", "content": "🤔 思考中..."})
+            yield _yield_event({"type": "status", "content": "思考中..."})
             
             loop = asyncio.get_event_loop()
             try:
-                # We do NOT use streaming from the OpenAI API here because we need full tool call blocks.
-                # In the future, this can be optimized to stream the text token by token.
+                # Debug logging to catch the malformed payload
+                import json
+                print(f"\n--- [DEBUG] Payload Messages (Round {round_idx}) ---")
+                for m in messages:
+                    print(json.dumps(m, ensure_ascii=False))
+                print("--------------------------------------------------\n")
+
+                # We use streaming for standard text to provide real-time typing effect to frontend.
                 response = await loop.run_in_executor(
                     None,
                     lambda: self.client.chat.completions.create(
@@ -1192,13 +1210,34 @@ class Agent:
                         max_tokens=self.max_tokens,
                         temperature=self.temperature,
                         extra_body={"enable_search": True},
+                        stream=False, # Disable streaming
                     )
                 )
             except Exception as e:
                 yield _yield_event({"type": "error", "content": f"模型调用报错: {e}"})
                 break
 
+            # Process Process Non-Streaming Response
             msg = response.choices[0].message
+            msg_content = msg.content or ""
+            msg_id = getattr(response, "id", "")
+            
+            # Extract <think> from content if reasoning_content is empty
+            thinking_content = getattr(msg, "reasoning_content", "") or ""
+            if not thinking_content and "<think>" in msg_content:
+                import re
+                think_match = re.search(r"<think>(.*?)</think>", msg_content, re.DOTALL)
+                if think_match:
+                    thinking_content = think_match.group(1).strip()
+                    msg_content = re.sub(r"<think>.*?</think>", "", msg_content, flags=re.DOTALL).strip()
+            
+            if thinking_content:
+                yield _yield_event({"type": "thinking_chunk", "content": thinking_content})
+
+            # Text content
+            if msg_content:
+                full_assistant_content += msg_content + "\n"
+                yield _yield_event({"type": "message_chunk", "content": msg_content})
 
             if msg.tool_calls:
                 assistant_dict = msg.model_dump(exclude_unset=True)
@@ -1209,6 +1248,13 @@ class Agent:
                     except (json.JSONDecodeError, TypeError):
                         tc_dict["function"]["arguments"] = "{}"
                 messages.append(assistant_dict)
+                # Persist intermediate assistant message (with tool_calls) to session
+                session.add_message(
+                    role="assistant",
+                    content=msg_content,
+                    tool_calls=assistant_dict.get("tool_calls"),
+                    thinking=thinking_content
+                )
 
                 round_had_error = False
                 for tc in msg.tool_calls:
@@ -1222,12 +1268,13 @@ class Agent:
 
                     yield _yield_event({
                         "type": "tool_call", 
+                        "id": tc.id,
                         "name": name, 
                         "params": params
                     })
                     
                     try:
-                        result = await loop.run_in_executor(None, self.skills.execute, name, params)
+                        result = await self.skills.execute(name, params)
                         if not isinstance(result, str):
                             result = str(result)
                     except Exception as e:
@@ -1235,6 +1282,7 @@ class Agent:
 
                     yield _yield_event({
                         "type": "tool_result",
+                        "id": tc.id,
                         "name": name,
                         "result": result[:500] + "..." if len(result) > 500 else result
                     })
@@ -1243,40 +1291,41 @@ class Agent:
                         round_had_error = True
                         tool_errors_history.append(f"尝试 `{name}({json.dumps(params, ensure_ascii=False)[:100]})` 失败: {result[:200]}")
 
-                    messages.append({
+                    tool_msg = {
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "name": name,
                         "content": result,
-                    })
+                    }
+                    messages.append(tool_msg)
+                    # Persist tool result to session
+                    session.add_message(**tool_msg)
                 
                 if round_had_error:
-                    consecutive_errors += 1
-                else:
-                    consecutive_errors = 0
-                    if tool_errors_history:
-                        success_calls = [f"`{tc.function.name}({tc.function.arguments[:100]})`" for tc in msg.tool_calls]
-                        experience_log = "**[System - 工具纠错经验自动记录]**\n- 失败尝试录:\n  - " + "\n  - ".join(tool_errors_history) + "\n- 最终解决思路: 成功改用 " + " | ".join(success_calls)
-                        self.journal.append(experience_log)
-                        tool_errors_history.clear()
-                    
-                if consecutive_errors >= 3:
-                    final_response = "⚠️ **执行安全中止**：连续多次调用工具报错已停止任务。"
-                    yield _yield_event({"type": "message", "content": final_response})
+                    final_response = "⚠️ **执行中止**：工具调用遭遇报错，为安全起见已停止自动重试。"
+                    self.sessions.save()
+                    yield _yield_event({"type": "message", "content": ""}) # Trigger UI finalize
                     break
-
+                    
                 continue
 
-            final_response = msg.content or ""
-            yield _yield_event({"type": "message", "content": final_response})
+            final_response = full_assistant_content.strip()
+            
+            if not msg.tool_calls:
+                # This was the final text-only round. Persist it.
+                session.add_message("assistant", msg_content, thinking=thinking_content)
+                
+            # Stop streaming. Text is already yielded via message_chunk.
+            yield _yield_event({"type": "message", "content": ""})
             break
 
-        if final_response is None:
+        if not final_response:
             final_response = "（已完成工具操作，无额外回复。）"
-            yield _yield_event({"type": "message", "content": final_response})
-
-        session.add_message("user", user_input)
-        session.add_message("assistant", final_response)
+            # We don't necessarily need to add this to the session if the previous rounds
+            # already covered the tools, but for UI finalization it's good to have.
+            # Only add if session is empty of assistant responses in this turn? 
+            # Actually, standardizing on loop-based additions is better.
+            
         self.sessions.save()
         
         loop = asyncio.get_event_loop()
@@ -1385,10 +1434,10 @@ class Agent:
             self.last_interaction_date = current_date
 
         # 2. Token pressure -> Rolling Summary
-        # Limit: 80% of max_tokens (approximate)
-        # We assume 1 token ~ 3 chars. 
-        # Reserve 1000 tokens for generation.
-        SAFE_LIMIT = (self.max_tokens - 1000) * 0.8
+        # Trigger when estimated input tokens exceed 80% of the context window,
+        # leaving headroom for the generation budget (max_tokens).
+        # context_window is configured separately from max_tokens (generation limit).
+        SAFE_LIMIT = (self.context_window - self.max_tokens) * 0.8
         est_tokens = self.sessions.current.estimate_tokens()
         
         if est_tokens > SAFE_LIMIT:
@@ -1405,19 +1454,29 @@ class Agent:
         4. Update Session.summary.
         """
         session = self.sessions.current
-        # Prune ~10 messages at a time or enough to free 20%
-        pruned = session.prune_oldest(keep_last=10)
+        # Prune 20% of messages at a time, keeping at least 10
+        total = len(session.messages)
+        keep = max(10, int(total * 0.8))
+        pruned = session.prune_oldest(keep_last=keep)
         if not pruned:
             return
 
-        # Format for summarization (ignore debug logs)
+        # Format for summarization (ignore debug logs and non-text content)
         filtered_pruned = [m for m in pruned if m["role"] != "debug_log"]
         if not filtered_pruned:
             print(f"[System] 滚动收尾清理：释放了 {len(pruned)} 条调试信息（无实质内容需总结）。")
             self.sessions.save()
             return
-            
-        text_block = "\n".join([f"{m['role']}: {m['content']}" for m in filtered_pruned])
+
+        def _extract_text(content) -> str:
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                parts = [item.get("text", "") for item in content if isinstance(item, dict) and item.get("type") == "text"]
+                return " ".join(parts) or "(非文本内容)"
+            return str(content)
+
+        text_block = "\n".join([f"{m['role']}: {_extract_text(m['content'])}" for m in filtered_pruned])
         
         # 1. Summarize
         try:

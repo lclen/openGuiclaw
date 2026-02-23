@@ -1,0 +1,17 @@
+<!-- History Panel -->
+<div x-show="activePanel === 'history'" class="flex flex-col h-full">
+    <div class="px-4 py-3 border-b border-white/10">
+        <p class="text-white font-semibold text-sm">历史对话</p>
+        <p class="text-white/40 text-xs mt-0.5" x-text="`共 ${sessions.length} 条`"></p>
+    </div>
+    <div class="flex-1 overflow-y-auto custom-scrollbar py-2">
+        <template x-for="s in sessions" :key="s.id">
+            <button @click="loadSession(s.id)"
+                class="w-full text-left px-4 py-2.5 hover:bg-white/10 transition-colors border-b border-white/5">
+                <p class="text-white/85 text-xs truncate" x-text="s.title"></p>
+                <p class="text-white/35 text-xs mt-0.5" x-text="`${s.message_count} 条消息`"></p>
+            </button>
+        </template>
+        <div x-show="sessions.length === 0" class="px-4 py-8 text-center text-white/30 text-sm">暂无历史对话</div>
+    </div>
+</div>

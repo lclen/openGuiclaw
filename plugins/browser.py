@@ -11,13 +11,14 @@ import subprocess
 _CURRENT_MODE = "system"
 
 def register(skills_manager):
-    def run_agent_browser(args: list[str]) -> str:
+    async def run_agent_browser(args: list[str]) -> str:
         """Helper to run agent-browser via npx, applying the correct mode flags."""
         global _CURRENT_MODE
         final_args = []
         
         if _CURRENT_MODE == "system":
             final_args.append("--auto-connect")
+            # For system mode, we ensure the browser is running
             from core.browser_utils import ensure_browser_running
             ensure_browser_running(9222)
         elif _CURRENT_MODE == "headed":
@@ -25,27 +26,40 @@ def register(skills_manager):
 
         final_args.extend(args)
 
-        # Use subprocess.list2cmdline to safely format the command for shell=True on Windows
-        cmd_str = f"npx agent-browser {subprocess.list2cmdline(final_args)}"
+        # Use npx --no-install to prevent hanging on update checks
+        cmd_str = f"npx --no-install agent-browser {subprocess.list2cmdline(final_args)}"
+        
         try:
-            result = subprocess.run(
+            import asyncio
+            # Use create_subprocess_shell for native async support
+            process = await asyncio.create_subprocess_shell(
                 cmd_str,
-                shell=True,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=60
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP") else 0
             )
-            if result.returncode != 0:
-                err = result.stderr.strip() or result.stdout.strip()
-                return f"❌ Browser Error (code {result.returncode}):\n{err}"
-            
-            out = result.stdout.strip()
-            return out if out else "✅ 执行成功 (无输出)"
-            
-        except subprocess.TimeoutExpired:
-            return "❌ Browser Error: 执行超时 (超过 60 秒)"
+
+            try:
+                # Set a hard timeout for the command execution
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=45)
+                
+                out = stdout.decode("utf-8", errors="replace").strip()
+                err = stderr.decode("utf-8", errors="replace").strip()
+                
+                if process.returncode != 0:
+                    return f"❌ Browser Error (code {process.returncode}):\n{err or out}"
+                
+                return out if out else "✅ 执行成功 (无输出)"
+                
+            except asyncio.TimeoutError:
+                # On Windows, we need to be careful about killing the process group
+                if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+                    import os, signal
+                    os.kill(process.pid, signal.CTRL_BREAK_EVENT)
+                else:
+                    process.kill()
+                return "❌ Browser Error: 执行超时 (超过 45 秒)"
+                
         except Exception as e:
             return f"❌ Browser System Error: {e}"
 
@@ -69,11 +83,11 @@ def register(skills_manager):
         },
         category="browser"
     )
-    def browser_open(url: str, mode: str = "background") -> str:
+    async def browser_open(url: str, mode: str = "background") -> str:
         global _CURRENT_MODE
         if mode in ["background", "headed", "system"]:
             _CURRENT_MODE = mode
-        return run_agent_browser(["open", url])
+        return await run_agent_browser(["open", url])
 
 
     @skills_manager.skill(
@@ -82,9 +96,9 @@ def register(skills_manager):
         parameters={"properties": {}},
         category="browser"
     )
-    def browser_get_snapshot() -> str:
+    async def browser_get_snapshot() -> str:
         # -i flag limits output to interactive elements (buttons, inputs, links) to save tokens
-        return run_agent_browser(["snapshot", "-i"])
+        return await run_agent_browser(["snapshot", "-i"])
 
     @skills_manager.skill(
         name="browser_interact",
@@ -109,11 +123,11 @@ def register(skills_manager):
         },
         category="browser"
     )
-    def browser_interact(action: str, target: str, value: str = "") -> str:
+    async def browser_interact(action: str, target: str, value: str = "") -> str:
         args = [action, target]
         if value and action in ["fill", "type"]:
             args.append(value)
-        return run_agent_browser(args)
+        return await run_agent_browser(args)
 
     @skills_manager.skill(
         name="browser_extract_text",
@@ -134,8 +148,8 @@ def register(skills_manager):
         },
         category="browser"
     )
-    def browser_extract_text(target: str, extract_type: str = "text") -> str:
-        return run_agent_browser(["get", extract_type, target])
+    async def browser_extract_text(target: str, extract_type: str = "text") -> str:
+        return await run_agent_browser(["get", extract_type, target])
 
     @skills_manager.skill(
         name="browser_scroll",
@@ -151,11 +165,11 @@ def register(skills_manager):
         },
         category="browser"
     )
-    def browser_scroll(direction_or_target: str) -> str:
+    async def browser_scroll(direction_or_target: str) -> str:
         if direction_or_target.lower() in ["up", "down", "left", "right"]:
-            return run_agent_browser(["scroll", direction_or_target])
+            return await run_agent_browser(["scroll", direction_or_target])
         else:
-            return run_agent_browser(["scrollintoview", direction_or_target])
+            return await run_agent_browser(["scrollintoview", direction_or_target])
 
     @skills_manager.skill(
         name="browser_wait",
@@ -171,11 +185,11 @@ def register(skills_manager):
         },
         category="browser"
     )
-    def browser_wait(wait_type: str) -> str:
+    async def browser_wait(wait_type: str) -> str:
         if wait_type.isdigit():
-            return run_agent_browser(["wait", wait_type])
+            return await run_agent_browser(["wait", wait_type])
         else:
-            return run_agent_browser(["wait", "--load", wait_type])
+            return await run_agent_browser(["wait", "--load", wait_type])
 
     @skills_manager.skill(
         name="browser_navigate",
@@ -191,8 +205,8 @@ def register(skills_manager):
         },
         category="browser"
     )
-    def browser_navigate(action: str) -> str:
-        return run_agent_browser([action])
+    async def browser_navigate(action: str) -> str:
+        return await run_agent_browser([action])
 
     @skills_manager.skill(
         name="browser_check_state",
@@ -212,8 +226,8 @@ def register(skills_manager):
         },
         category="browser"
     )
-    def browser_check_state(target: str, state: str) -> str:
-        return run_agent_browser(["is", state, target])
+    async def browser_check_state(target: str, state: str) -> str:
+        return await run_agent_browser(["is", state, target])
 
     @skills_manager.skill(
         name="browser_close",
@@ -221,5 +235,5 @@ def register(skills_manager):
         parameters={"properties": {}},
         category="browser"
     )
-    def browser_close() -> str:
-        return run_agent_browser(["close"])
+    async def browser_close() -> str:
+        return await run_agent_browser(["close"])

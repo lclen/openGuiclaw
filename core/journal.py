@@ -102,11 +102,8 @@ class JournalManager:
                 end = min(len(content), first_hit_idx + 400)
                 snippet = ("..." if start > 0 else "") + content[start:end].strip() + "..."
                 results.append({"date": date_str, "snippet": snippet, "score": score})
-                if len(results) >= top_k:
-                    break
-
         results.sort(key=lambda x: (-x["score"], x["date"]))
-        return results
+        return results[:top_k]
 
     def recent_days(self, n: int = 3) -> list:
         """

@@ -44,6 +44,7 @@ HELP_TEXT = """
   /plan             切换计划执行模式（自驾/确认/普通）
   /context          查看视觉感知状态
   /config           配置主动回复感知参数 (interval/cooldown/verbose)
+  /poke             强制触发一次 AI 主动搭话 (寒暄)
   /persona          列出所有可用性格 (Identities)
   /persona <name>   切换主动 AI 性格
   /quit  /exit      退出
@@ -131,7 +132,7 @@ def main():
     context = ContextManager(
         client=vision_client,
         vision_model=vision_model,
-        interval_seconds=300, # 5 min
+        interval_minutes=5,
         get_history_func=lambda: agent.sessions.current.get_history(max_messages=5),
         get_visual_history_func=lambda: [m["content"] for m in agent.sessions.current.messages if m["role"] == "visual_log"],
         add_visual_log_func=agent.add_visual_log,
@@ -343,10 +344,10 @@ def main():
                 
             try:
                 if subcmd == "interval" and len(parts) >= 3:
-                    sec = int(parts[2])
-                    agent.config["proactive"]["interval_seconds"] = sec
-                    context.interval = sec
-                    print(f"  ✅ 截屏间隔已修改为 {sec} 秒。\n")
+                    mins = int(parts[2])
+                    agent.config["proactive"]["interval_minutes"] = mins
+                    context.interval = mins * 60
+                    print(f"  ✅ 截屏间隔已修改为 {mins} 分钟。\n")
                 elif subcmd == "cooldown" and len(parts) >= 3:
                     mins = int(parts[2])
                     agent.config["proactive"]["cooldown_minutes"] = mins
@@ -365,6 +366,10 @@ def main():
                     json.dump(agent.config, f, indent=4, ensure_ascii=False)
             except ValueError:
                 print("  ❌ 请提供有效的数字参数。\n")
+            continue
+        elif cmd == "/poke":
+            print("  ⏳ 正在手动触发一次视觉感知寒暄...\n")
+            context.poke()
             continue
         elif cmd.startswith("/persona"):
             parts = user_input.split(maxsplit=1)

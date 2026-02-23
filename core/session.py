@@ -8,6 +8,7 @@ Inspired by Nanobot's SessionManager.
 """
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -35,46 +36,108 @@ class Session:
         self.messages.append(msg)
         self.updated_at = msg["timestamp"]
 
-    def get_history(self, max_messages: int = 30) -> List[Dict[str, str]]:
-        """Return recent messages in LLM format (role + content only)."""
+    def get_history(self, max_messages: int = 200) -> List[Dict[str, Any]]:
+        """Return recent messages in LLM format (role + content + tool spec)."""
         result = []
-        # Prepend rolling summary token if exists
+        # Prepend rolling summary as a user/assistant exchange so it's compatible
+        # with APIs that only allow a single system message at index 0.
         if self.summary:
-            result.append({
-                "role": "system",
-                "content": f"[前情提要]\n{self.summary}"
-            })
-        result += [
-            {"role": m["role"], "content": m["content"]}
-            for m in self.messages[-max_messages:] if m["role"] not in ("visual_log", "debug_log")
-        ]
+            result.append({"role": "user",     "content": "[前情提要请求] 请确认你已了解之前的对话摘要。"})
+            result.append({"role": "assistant", "content": f"[前情提要]\n{self.summary}\n\n已了解，我会基于以上摘要继续对话。"})
+
+        raw_subset = self.messages[-max_messages:]
+
+        # ── Pass 1: build clean message list, skipping internal log roles ──────
+        cleaned: List[Dict] = []
+        for m in raw_subset:
+            if m["role"] in ("visual_log", "debug_log"):
+                continue
+            msg: Dict = {"role": m["role"], "content": m.get("content", "")}
+            if "tool_calls" in m and m["tool_calls"]:
+                tcs = m["tool_calls"]
+                if isinstance(tcs, str):
+                    try:
+                        tcs = json.loads(tcs)
+                    except Exception:
+                        tcs = []
+                msg["tool_calls"] = tcs
+            if "tool_call_id" in m:
+                msg["tool_call_id"] = m["tool_call_id"]
+            if "name" in m:
+                msg["name"] = m["name"]
+            cleaned.append(msg)
+
+        # ── Pass 2: validate tool call pairing ────────────────────────────────
+        # Collect all tool_call_ids that are actually declared by an assistant turn.
+        declared_ids: set = set()
+        for msg in cleaned:
+            if msg["role"] == "assistant" and msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    tc_id = tc.get("id") if isinstance(tc, dict) else None
+                    if tc_id:
+                        declared_ids.add(tc_id)
+
+        # Remove tool result messages whose preceding tool_call was not declared
+        # (happens when prune_oldest cuts the assistant turn but keeps the result).
+        validated: List[Dict] = []
+        for msg in cleaned:
+            if msg["role"] == "tool":
+                if msg.get("tool_call_id") not in declared_ids:
+                    continue  # orphaned tool result — drop it
+            validated.append(msg)
+
+        # ── Pass 3: trim leading/trailing edge cases ──────────────────────────
+        # Drop leading tool messages (still possible after filtering)
+        while validated and validated[0]["role"] == "tool":
+            validated.pop(0)
+
+        # Drop trailing assistant messages that have tool_calls but no results follow
+        while validated and validated[-1]["role"] == "assistant" and validated[-1].get("tool_calls"):
+            validated.pop()
+
+        result.extend(validated)
         return result
 
     def estimate_tokens(self) -> int:
         """
-        Rough token estimate: ~1 token per 3 characters (works for both CJK and Latin).
-        Includes the rolling summary and visual_log messages in the estimate.
-        For image payloads, estimate ~1000 tokens per image.
+        Estimate token count for the current session.
+        - ASCII/Latin: ~4 chars per token
+        - CJK characters: ~1 char per token
+        - Images: ~1000 tokens each (conservative estimate)
         """
-        total_chars = len(self.summary)
+        import re
+        _cjk_re = re.compile(r'[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]')
+
+        def _count(text: str) -> int:
+            cjk = len(_cjk_re.findall(text))
+            other = len(text) - cjk
+            return cjk + (other // 4)
+
+        total = _count(self.summary)
         total_image_tokens = 0
-        
+
         for m in self.messages:
             if m.get("role") == "debug_log":
                 continue
-                
+
             content = m.get("content", "")
             if isinstance(content, str):
-                total_chars += len(content)
+                total += _count(content)
             elif isinstance(content, list):
                 for item in content:
                     if isinstance(item, dict):
                         if item.get("type") == "text":
-                            total_chars += len(item.get("text", ""))
+                            total += _count(item.get("text", ""))
                         elif item.get("type") == "image_url":
                             total_image_tokens += 1000
-                            
-        return (total_chars // 3) + total_image_tokens
+
+            if "tool_calls" in m and m["tool_calls"]:
+                try:
+                    total += _count(json.dumps(m["tool_calls"], ensure_ascii=False))
+                except Exception:
+                    pass
+
+        return total + total_image_tokens
 
     def prune_oldest(self, keep_last: int) -> List[Dict[str, Any]]:
         """
@@ -134,7 +197,8 @@ class SessionManager:
     def __init__(self, data_dir: str = "data"):
         self.sessions_dir = Path(data_dir) / "sessions"
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
-        
+        self._lock = threading.Lock()
+
         # Auto-resume: Find the most recently modified session file
         latest_session_id = None
         latest_mtime = 0
@@ -167,11 +231,12 @@ class SessionManager:
         return self._current
 
     def save(self, session: Optional[Session] = None) -> None:
-        """Save a session to disk as JSON."""
+        """Save a session to disk as JSON. Thread-safe."""
         s = session or self._current
         path = self.sessions_dir / f"{s.session_id}.json"
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(s.to_dict(), f, ensure_ascii=False, indent=2)
+        with self._lock:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(s.to_dict(), f, ensure_ascii=False, indent=2)
 
     def load(self, session_id: str) -> Optional[Session]:
         """Load a specific session by ID."""
