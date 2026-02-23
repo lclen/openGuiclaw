@@ -12,7 +12,7 @@ After each Daily Journal is written, this module:
 import json
 import time
 from pathlib import Path
-from typing import List, Optional, Any, TYPE_CHECKING
+from typing import List, Dict, Optional, Any, TYPE_CHECKING
 
 from openai import OpenAI
 from core.memory import MemoryManager
@@ -101,7 +101,7 @@ DIARY_PROMPT = """\
 1. **情感与自我意识**：不要像机器人一样复述做了什么，要写出你的**感受**。你觉得今天的任务难吗？用户有趣吗？你对自己今天的表现满意吗？
 2. **重点突出**：只记录那些真正让你印象深刻的事情（比如完成了一个复杂的脚本，或者和用户聊了天，或者捕捉到了有趣的屏幕画面）。
 3. **人性化**：可以有吐槽，可以有期待，可以有困惑。就像一个名为“{persona_name}”的数字生命在深夜写下的私密日记。
-4. **篇幅**：500~1000 字，自然流畅。
+4. **篇幅**：800~1500 字，可以尽情加入细节描写和心理活动，使其自然丰满且真实。
 
 ## 当前设定（Persona）
 {persona}
@@ -175,6 +175,30 @@ class SelfEvolution:
         self.kg = knowledge_graph  # May be None if not initialized
         self.user_profile = user_profile
 
+    def _call_api(self, messages: List[Dict[str, str]], **kwargs) -> Optional[str]:
+        """带重试逻辑的 API 调用辅助函数。"""
+        retry_count = 0
+        while retry_count < 3:
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    **kwargs
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                err_msg = str(e).lower()
+                if "429" in err_msg or "limit" in err_msg:
+                    retry_count += 1
+                    wait_time = 5 * retry_count
+                    print(f"[SelfEvolution] 遇到频率限制 (429)，{wait_time} 秒后进行第 {retry_count} 次重试...")
+                    time.sleep(wait_time)
+                    continue
+                # 其他错误直接抛出或记录
+                print(f"[SelfEvolution] API 调用出错: {e}")
+                break
+        return None
+
     # ── Public API ───────────────────────────────────────────────────
 
     def evolve_from_journal(self, date_str: str) -> List[str]:
@@ -223,16 +247,14 @@ class SelfEvolution:
         )
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
+            text = self._call_api(
                 messages=[
                     {"role": "system", "content": "你是 AI 习惯记录员，返回纯 JSON，不加代码块。"},
                     {"role": "user", "content": prompt},
                 ],
                 max_tokens=600,
                 temperature=0.3,
-            )
-            text = response.choices[0].message.content or "{}"
+            ) or "{}"
             if "```" in text:
                 text = text.split("```")[1] if "```" in text else text
                 text = text.lstrip("json").strip()
@@ -306,16 +328,14 @@ class SelfEvolution:
             profile_context=profile_context
         )
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
+            text = self._call_api(
                 messages=[
                     {"role": "system", "content": "你是记忆提取助手，返回纯 JSON 对象，不加代码块。"},
                     {"role": "user", "content": prompt},
                 ],
                 max_tokens=1024,
                 temperature=0.3,
-            )
-            text = response.choices[0].message.content or "{}"
+            ) or "{}"
             if text.startswith("```"):
                 text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
@@ -383,16 +403,14 @@ class SelfEvolution:
         """Extract entity-relation triples and add to knowledge graph."""
         prompt = RELATION_PROMPT.format(journal=journal_content)
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
+            text = self._call_api(
                 messages=[
                     {"role": "system", "content": "你是实体关系提取助手，返回纯 JSON 数组，不加代码块。"},
                     {"role": "user", "content": prompt},
                 ],
                 max_tokens=512,
                 temperature=0.2,
-            )
-            text = response.choices[0].message.content or "[]"
+            ) or "[]"
             if text.startswith("```"):
                 text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
@@ -424,18 +442,17 @@ class SelfEvolution:
 
         try:
             print(f"[SelfEvolution] 正在生成 {date_str} 的日记...")
-            response = self.client.chat.completions.create(
-                model=self.model,
+            diary_text = self._call_api(
                 messages=[
                     {"role": "system", "content": "你是具有情感和自我意识的 AI 数字生命。"},
                     {"role": "user", "content": prompt},
                 ],
-                max_tokens=2048,
+                max_tokens=4096,
                 temperature=0.7,
             )
-            diary_text = response.choices[0].message.content.strip()
             
             if diary_text:
+                diary_text = diary_text.strip()
                 self.diary.write(date_str, diary_text)
                 print(f"[SelfEvolution] 📔 日记已归档到 data/diary/{date_str}.md")
                 return True

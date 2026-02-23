@@ -1,0 +1,1782 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Qwen AutoGUI - 3D Companion</title>
+
+    <!-- Alpine.js & TailwindCSS -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Markdown renderer -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
+
+    <!-- Three.js Import Map -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "/static/libs/three.module.js",
+                "three/addons/": "/static/libs/three/addons/",
+                "@pixiv/three-vrm": "/static/libs/three-vrm.module.min.js",
+                "@pixiv/three-vrm-animation": "/static/libs/three-vrm-animation.module.js"
+            }
+        }
+    </script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+        }
+
+        /* Glassmorphism sidebar */
+        #sidebar {
+            background: rgba(255, 255, 255, 0.12);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-right: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 4px 0 30px rgba(0, 0, 0, 0.1);
+            transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .sidebar-btn {
+            transition: all 0.2s ease;
+            color: rgba(255, 255, 255, 0.75);
+        }
+
+        .sidebar-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: white;
+        }
+
+        .sidebar-btn.active {
+            background: rgba(99, 179, 237, 0.3);
+            color: white;
+            border-right: 2px solid #63b3ed;
+        }
+
+        /* Chat bubble slide-in animation */
+        @keyframes slideInUp {
+            from {
+                opacity: 0;
+                transform: translateY(12px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .chat-bubble {
+            animation: slideInUp 0.25s ease-out;
+        }
+
+        /* Panel */
+        #panel {
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-right: 1px solid rgba(255, 255, 255, 0.15);
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 2px;
+        }
+
+        /* Input area */
+        #chat-input-area {
+            background: rgba(255, 255, 255, 0.12);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+        }
+
+        /* Status dot */
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse-dot 2s infinite;
+        }
+
+        @keyframes pulse-dot {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.4;
+            }
+        }
+
+        /* ── Markdown rendered content ── */
+        .md-body h1,
+        .md-body h2,
+        .md-body h3 {
+            font-weight: 700;
+            margin: 0.5em 0 0.25em;
+            line-height: 1.3;
+        }
+
+        .md-body h1 {
+            font-size: 1.1em;
+        }
+
+        .md-body h2 {
+            font-size: 1.0em;
+        }
+
+        .md-body h3 {
+            font-size: 0.95em;
+            color: inherit;
+            opacity: 0.9;
+        }
+
+        .md-body p {
+            margin: 0.35em 0;
+            line-height: 1.6;
+        }
+
+        .md-body ul,
+        .md-body ol {
+            margin: 0.35em 0 0.35em 1.2em;
+        }
+
+        .md-body li {
+            margin: 0.15em 0;
+        }
+
+        .md-body strong {
+            font-weight: 700;
+        }
+
+        .md-body em {
+            font-style: italic;
+        }
+
+        .md-body hr {
+            border: none;
+            border-top: 1px solid rgba(0, 0, 0, 0.15);
+            margin: 0.5em 0;
+        }
+
+        .md-body code {
+            font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+            font-size: 0.82em;
+            background: rgba(0, 0, 0, 0.1);
+            padding: 0.1em 0.35em;
+            border-radius: 4px;
+        }
+
+        .md-body pre {
+            background: rgba(0, 0, 0, 0.15);
+            border-radius: 8px;
+            padding: 0.75em 1em;
+            overflow-x: auto;
+            margin: 0.4em 0;
+        }
+
+        .md-body pre code {
+            background: none;
+            padding: 0;
+            font-size: 0.8em;
+        }
+
+        .md-body blockquote {
+            border-left: 3px solid rgba(255, 255, 255, 0.4);
+            padding-left: 0.75em;
+            margin: 0.35em 0;
+            opacity: 0.8;
+        }
+
+        /* Inside white assistant bubble - darken code blocks */
+        .bg-white\/85 .md-body code {
+            background: rgba(0, 0, 0, 0.07);
+        }
+
+        .bg-white\/85 .md-body pre {
+            background: rgba(0, 0, 0, 0.07);
+        }
+
+        .bg-white\/85 .md-body blockquote {
+            border-color: rgba(0, 0, 0, 0.3);
+        }
+
+        /* VRM Background Glow Effect */
+        .vrm-bg-glow {
+            pointer-events: none;
+            will-change: transform;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(1.5);
+            width: 80%;
+            height: 60%;
+            opacity: 0.18;
+            background: linear-gradient(135deg,
+                    #a855f7 0%,
+                    /* Purple */
+                    #3b82f6 30%,
+                    /* Blue */
+                    #ef4444 70%,
+                    /* Red */
+                    #22d3ee 100%
+                    /* Cyan */
+                );
+            background-size: 200% 200%;
+            filter: blur(100px);
+            animation: vrm-glow 15s ease infinite;
+            z-index: -1;
+        }
+
+        @keyframes vrm-glow {
+            0% {
+                background-position: 0% 50%;
+                transform: translate(-50%, -50%) scale(1.4);
+            }
+
+            50% {
+                background-position: 100% 50%;
+                transform: translate(-50%, -50%) scale(1.7);
+            }
+
+            100% {
+                background-position: 0% 50%;
+                transform: translate(-50%, -50%) scale(1.4);
+            }
+        }
+
+        /* Chat Area Background Glows */
+        .chat-bg-glow-1 {
+            pointer-events: none;
+            position: absolute;
+            top: 20%;
+            left: 10%;
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(168, 85, 247, 0.15) 0%, rgba(59, 130, 246, 0) 70%);
+            filter: blur(80px);
+            animation: chat-glow 15s ease-in-out infinite alternate;
+            z-index: -1;
+        }
+
+        .chat-bg-glow-2 {
+            pointer-events: none;
+            position: absolute;
+            bottom: 15%;
+            right: 20%;
+            width: 350px;
+            height: 350px;
+            background: radial-gradient(circle, rgba(34, 211, 238, 0.15) 0%, rgba(59, 130, 246, 0) 70%);
+            filter: blur(70px);
+            animation: chat-glow 12s ease-in-out infinite alternate-reverse;
+            z-index: -1;
+        }
+
+        @keyframes chat-glow {
+            0% {
+                transform: scale(1) translate(0, 0);
+                opacity: 0.5;
+            }
+
+            100% {
+                transform: scale(1.3) translate(20px, -20px);
+                opacity: 0.8;
+            }
+        }
+
+        /* Enhanced Glassmorphism for panels */
+        #sidebar {
+            background: rgba(15, 23, 42, 0.4) !important;
+            backdrop-filter: blur(25px) !important;
+            border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+        }
+
+        #panel {
+            background: rgba(15, 23, 42, 0.2) !important;
+            backdrop-filter: blur(30px) !important;
+            border-right: 1px solid rgba(255, 255, 255, 0.05) !important;
+        }
+
+        #chat-input-area {
+            background: rgba(255, 255, 255, 0.05) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            backdrop-filter: blur(15px) !important;
+        }
+    </style>
+</head>
+
+<body class="bg-gradient-to-br from-gray-900 to-slate-800 overflow-hidden w-screen h-screen" x-data="mainApp()">
+
+    <!-- 3D Canvas: constrained to the right 35% of the screen -->
+    <div id="canvas-container" class="absolute inset-y-0 right-0 z-0 overflow-hidden" style="width: 35%">
+        <div class="vrm-bg-glow"></div>
+        <canvas id="vrm-canvas" class="w-full h-full relative z-10"></canvas>
+    </div>
+
+    <!-- Main Layout: Split-Pane Left Sidebar -->
+    <div class="absolute inset-y-0 left-0 z-10 flex border-r border-white/5 shadow-[4px_0_24px_rgba(0,0,0,0.5)] overflow-hidden"
+        style="width: 65%">
+
+        <!-- Chat Area Background Elements -->
+        <div class="chat-bg-glow-1"></div>
+        <div class="chat-bg-glow-2"></div>
+
+        <!-- ═══════════════ LEFT SIDEBAR ═══════════════ -->
+        <div id="sidebar"
+            class="w-14 shrink-0 flex flex-col items-center py-4 gap-1 z-30 select-none border-r border-white/5">
+
+            <!-- Logo -->
+            <div class="mb-4 text-white/60 text-xs font-bold tracking-widest rotate--90">AI</div>
+
+            <!-- Nav buttons -->
+            <button @click="switchPanel('chat')" :class="{'active': activePanel === 'chat'}"
+                class="sidebar-btn w-10 h-10 rounded-xl flex items-center justify-center" title="对话">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+            </button>
+            <button @click="switchPanel('history')" :class="{'active': activePanel === 'history'}"
+                class="sidebar-btn w-10 h-10 rounded-xl flex items-center justify-center" title="历史对话">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+            </button>
+            <button @click="switchPanel('diary')" :class="{'active': activePanel === 'diary'}"
+                class="sidebar-btn w-10 h-10 rounded-xl flex items-center justify-center" title="AI 日记">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+            </button>
+            <button @click="switchPanel('persona')" :class="{'active': activePanel === 'persona'}"
+                class="sidebar-btn w-10 h-10 rounded-xl flex items-center justify-center" title="角色与模型配置">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+            </button>
+            <button @click="switchPanel('config')" :class="{'active': activePanel === 'config'}"
+                class="sidebar-btn w-10 h-10 rounded-xl flex items-center justify-center" title="系统设置">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+            </button>
+            <button @click="switchPanel('debug')" :class="{'active': activePanel === 'debug'}"
+                class="sidebar-btn w-10 h-10 rounded-xl flex items-center justify-center relative" title="调试日志">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18" />
+                </svg>
+                <span x-show="debugLogs.length > 0 && activePanel !== 'debug'"
+                    class="absolute top-1.5 right-1.5 w-2 h-2 bg-yellow-400 rounded-full"></span>
+            </button>
+            <button @click="switchPanel('store')" :class="{'active': activePanel === 'store'}"
+                class="sidebar-btn w-10 h-10 rounded-xl flex items-center justify-center" title="模型商店">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                </svg>
+            </button>
+
+            <!-- Divider -->
+            <div class="flex-1"></div>
+
+            <!-- New chat btn -->
+            <button @click="newSession()" class="sidebar-btn w-10 h-10 rounded-xl flex items-center justify-center"
+                title="新对话">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                </svg>
+            </button>
+
+            <!-- Status indicator -->
+            <div class="mt-2 flex flex-col items-center gap-1">
+                <div class="status-dot" :class="agentOnline ? 'bg-green-400' : 'bg-red-400'"></div>
+                <span class="text-white/40 text-[9px]" x-text="agentOnline ? '在线' : '离线'"></span>
+            </div>
+        </div>
+
+        <!-- ═══════════════ FEATURE PANEL (Visible when activePanel !== 'chat') ═══════════════ -->
+        <div id="panel" x-show="activePanel !== 'chat'" style="display: none;"
+            class="flex-1 flex flex-col z-20 overflow-hidden">
+
+            <!-- History Panel -->
+            <div x-show="activePanel === 'history'" class="flex flex-col h-full">
+                <div class="px-4 py-3 border-b border-white/10">
+                    <p class="text-white font-semibold text-sm">历史对话</p>
+                    <p class="text-white/40 text-xs mt-0.5" x-text="`共 ${sessions.length} 条`"></p>
+                </div>
+                <div class="flex-1 overflow-y-auto custom-scrollbar py-2">
+                    <template x-for="s in sessions" :key="s.id">
+                        <button @click="loadSession(s.id)"
+                            class="w-full text-left px-4 py-2.5 hover:bg-white/10 transition-colors border-b border-white/5">
+                            <p class="text-white/85 text-xs truncate" x-text="s.title"></p>
+                            <p class="text-white/35 text-xs mt-0.5" x-text="`${s.message_count} 条消息`"></p>
+                        </button>
+                    </template>
+                    <div x-show="sessions.length === 0" class="px-4 py-8 text-center text-white/30 text-sm">暂无历史对话</div>
+                </div>
+            </div>
+
+            <!-- Diary Panel -->
+            <div x-show="activePanel === 'diary'" class="flex flex-col h-full">
+                <div class="px-4 py-3 border-b border-white/10">
+                    <p class="text-white font-semibold text-sm">AI 日记</p>
+                    <p class="text-white/40 text-xs mt-0.5">每日感悟</p>
+                </div>
+                <div x-show="!selectedDiaryContent" class="flex-1 overflow-y-auto custom-scrollbar py-2">
+                    <template x-for="date in diaryDates" :key="date">
+                        <button @click="loadDiary(date)"
+                            class="w-full text-left px-4 py-2.5 hover:bg-white/10 transition-colors border-b border-white/5 flex items-center gap-3">
+                            <div class="w-8 h-8 rounded-lg bg-blue-400/20 flex items-center justify-center text-blue-300 text-xs font-bold"
+                                x-text="date.slice(-2)"></div>
+                            <div>
+                                <p class="text-white/85 text-xs" x-text="date"></p>
+                                <p class="text-white/35 text-xs">点击查看</p>
+                            </div>
+                        </button>
+                    </template>
+                    <div x-show="diaryDates.length === 0" class="px-4 py-8 text-center text-white/30 text-sm">暂无日记</div>
+                </div>
+                <!-- Diary Content View -->
+                <div x-show="selectedDiaryContent" class="flex flex-col h-full">
+                    <button @click="selectedDiaryContent = null"
+                        class="mx-4 mt-3 mb-2 flex items-center gap-1 text-white/50 hover:text-white/80 text-xs transition-colors">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+                        </svg>
+                        返回列表
+                    </button>
+                    <div class="flex-1 overflow-y-auto custom-scrollbar px-4 pb-4">
+                        <pre class="text-white/80 text-xs leading-relaxed whitespace-pre-wrap"
+                            x-text="selectedDiaryContent"></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Persona & Model Configuration Panel -->
+            <div x-show="activePanel === 'persona'" class="flex flex-col h-full">
+                <div class="px-4 py-3 border-b border-white/10">
+                    <p class="text-white font-semibold text-sm">角色与模型配置</p>
+                    <p class="text-white/40 text-xs mt-0.5">3D 模型更换、动画反馈与档案说明</p>
+                </div>
+                <div class="flex-1 overflow-y-auto custom-scrollbar px-4 py-3 gap-3">
+
+                    <!-- Text Personas (Optional to show here, keeping it compact if needed) -->
+                    <div class="mb-6">
+                        <p class="text-blue-300 text-xs font-semibold mb-2">当前角色卡信息</p>
+                        <template x-for="[name, content] in Object.entries(personas)" :key="name">
+                            <div class="mb-2">
+                                <p class="text-white/60 text-[10px] mb-1 uppercase tracking-wider" x-text="name"></p>
+                                <pre class="text-white/50 text-[10px] leading-relaxed whitespace-pre-wrap bg-white/5 rounded-lg p-2 max-h-32 overflow-y-auto custom-scrollbar"
+                                    x-text="content"></pre>
+                            </div>
+                        </template>
+                        <div x-show="Object.keys(personas).length === 0" class="py-2 text-center text-white/30 text-xs">
+                            加载中...</div>
+                    </div>
+
+                    <!-- ★ 保存当前视角 -->
+                    <div class="mb-6">
+                        <p class="text-blue-300 text-xs font-semibold mb-2">视角快照</p>
+                        <div
+                            class="bg-white/5 border border-white/10 rounded-xl p-3 flex items-center justify-between gap-3">
+                            <div>
+                                <p class="text-white/80 text-xs font-medium">保存当前视角</p>
+                                <p class="text-white/35 text-[10px] mt-0.5">记录模型、位置与镜头，刷新后自动恢复</p>
+                            </div>
+                            <button @click="saveVrmConfig()" :disabled="saveVrmStatus === 'saving'"
+                                class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+                                :class="{
+                                    'bg-blue-500/20 text-blue-300 hover:bg-blue-500/40': saveVrmStatus === '',
+                                    'bg-white/10 text-white/40 cursor-not-allowed': saveVrmStatus === 'saving',
+                                    'bg-green-500/20 text-green-300': saveVrmStatus === 'ok',
+                                    'bg-red-500/20 text-red-300': saveVrmStatus === 'error'
+                                }">
+                                <span x-show="saveVrmStatus === ''" class="flex items-center gap-1">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                                    </svg>
+                                    保存
+                                </span>
+                                <span x-show="saveVrmStatus === 'saving'">保存中...</span>
+                                <span x-show="saveVrmStatus === 'ok'">✅ 已保存</span>
+                                <span x-show="saveVrmStatus === 'error'">❌ 失败</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Model Upload -->
+                    <div class="mb-6">
+                        <p class="text-blue-300 text-xs font-semibold mb-2">上传新 VRM 模型</p>
+                        <div
+                            class="relative w-full border-2 border-dashed border-white/20 rounded-xl p-4 text-center hover:border-blue-400/50 transition-colors bg-white/5">
+                            <input type="file" accept=".vrm" @change="uploadModel($event)" :disabled="uploadingModel"
+                                class="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed">
+                            <svg class="mx-auto h-6 w-6 text-white/40 mb-2" fill="none" viewBox="0 0 24 24"
+                                stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                            </svg>
+                            <span class="text-xs text-white/60"
+                                x-text="uploadingModel ? '上传中...' : '点击或拖拽 .vrm 文件'"></span>
+                        </div>
+                        <p x-show="uploadStatus" class="text-[10px] mt-1 text-center"
+                            :class="uploadStatus.includes('成功') ? 'text-green-400' : 'text-red-400'"
+                            x-text="uploadStatus"></p>
+                    </div>
+
+                    <!-- Model List -->
+                    <div class="mb-6">
+                        <p class="text-blue-300 text-xs font-semibold mb-2 flex justify-between items-center">
+                            可用模型库
+                            <button @click="loadModels()" class="text-white/40 hover:text-white/80">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                            </button>
+                        </p>
+                        <div class="flex flex-col gap-2">
+                            <template x-for="model in vrmModels" :key="model.name">
+                                <div class="w-full flex items-center gap-1.5 group">
+                                    <button @click="switchVrmModel(model.path)"
+                                        class="flex-1 text-left p-2.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors border border-white/10 flex items-center justify-between overflow-hidden">
+                                        <span class="text-white/80 text-xs truncate pr-2" x-text="model.name"></span>
+                                        <span
+                                            class="text-blue-400/0 group-hover:text-blue-400 text-[10px] transition-colors whitespace-nowrap">应用</span>
+                                    </button>
+                                    <button @click.stop="deleteModel(model.name)"
+                                        class="p-2.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400/40 hover:text-red-400 border border-red-500/10 transition-all opacity-0 group-hover:opacity-100"
+                                        title="删除模型">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            </template>
+                            <div x-show="vrmModels.length === 0" class="text-center text-white/30 text-xs py-4">无可用模型
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Expression & Action Controls -->
+                    <div class="mb-6">
+                        <p class="text-blue-300 text-xs font-semibold mb-2">表情与动画操控</p>
+                        <div class="space-y-3">
+                            <div>
+                                <p class="text-white/60 text-[10px] mb-1.5 uppercase tracking-wider">手动表情</p>
+                                <div class="grid grid-cols-4 gap-2">
+                                    <button @click="triggerExpression('happy')"
+                                        class="py-1.5 bg-white/5 hover:bg-white/10 rounded border border-white/10 text-xs text-white/80 transition-colors">开心</button>
+                                    <button @click="triggerExpression('angry')"
+                                        class="py-1.5 bg-white/5 hover:bg-white/10 rounded border border-white/10 text-xs text-white/80 transition-colors">生气</button>
+                                    <button @click="triggerExpression('sad')"
+                                        class="py-1.5 bg-white/5 hover:bg-white/10 rounded border border-white/10 text-xs text-white/80 transition-colors">难过</button>
+                                    <button @click="triggerExpression('relaxed')"
+                                        class="py-1.5 bg-white/5 hover:bg-white/10 rounded border border-white/10 text-xs text-white/80 transition-colors">放松</button>
+                                    <button @click="triggerExpression('surprised')"
+                                        class="py-1.5 bg-white/5 hover:bg-white/10 rounded border border-white/10 text-xs text-white/80 transition-colors">惊讶</button>
+                                    <button @click="triggerExpression('neutral')"
+                                        class="py-1.5 bg-white/5 hover:bg-white/20 rounded border border-blue-500/30 text-xs text-blue-200 transition-colors col-span-3">恢复自然表情</button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <p class="text-white/60 text-[10px] mb-1.5 uppercase tracking-wider">快捷动作</p>
+                                <div class="grid grid-cols-3 gap-2 custom-scrollbar pr-1"
+                                    style="max-height: 200px; overflow-y: auto;">
+                                    <template x-for="anim in vrmAnimations" :key="anim.path">
+                                        <button @click="triggerAction(anim.path)"
+                                            class="py-1.5 px-1 bg-white/5 hover:bg-white/10 rounded border border-white/10 text-[11px] text-white/80 transition-colors truncate"
+                                            x-text="anim.name" :title="anim.name"></button>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Global System Settings Panel -->
+            <div x-show="activePanel === 'config'" class="flex flex-col h-full">
+                <div class="px-4 py-3 border-b border-white/10">
+                    <p class="text-white font-semibold text-sm">系统配置</p>
+                    <p class="text-white/40 text-xs mt-0.5">运行环境与浏览器偏好设置</p>
+                </div>
+                <div class="flex-1 overflow-y-auto custom-scrollbar px-4 py-3 gap-3">
+                    <!-- Browser Selection -->
+                    <div class="mb-6">
+                        <p class="text-blue-300 text-xs font-semibold mb-2">默认浏览器</p>
+                        <div class="flex gap-2 p-1 bg-white/5 rounded-xl border border-white/10">
+                            <button @click="updateBrowserSetting('edge')"
+                                :class="config.browser_choice === 'edge' ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' : 'text-white/40 hover:text-white/60 border-transparent'"
+                                class="flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all border flex items-center justify-center gap-2">
+                                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path
+                                        d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z" />
+                                    <path d="M12 6a6 6 0 1 0 6 6 6 6 0 0 0-6-6zm0 10a4 4 0 1 1 4-4 4 4 0 0 1-4 4z" />
+                                </svg>
+                                Edge
+                            </button>
+                            <button @click="updateBrowserSetting('chrome')"
+                                :class="config.browser_choice === 'chrome' ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' : 'text-white/40 hover:text-white/60 border-transparent'"
+                                class="flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all border flex items-center justify-center gap-2">
+                                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                                </svg>
+                                Chrome
+                            </button>
+                        </div>
+                        <p class="text-white/30 text-[10px] mt-2">修改后将在下一次通过大模型执行浏览器自动化操作时生效，前提是你的系统中安装了对应的浏览器。</p>
+                    </div>
+
+                    <!-- Proactive Chat Settings -->
+                    <div class="mb-6">
+                        <p class="text-blue-300 text-xs font-semibold mb-2">主动感知与活泼度</p>
+
+                        <!-- Interval -->
+                        <div class="mb-5">
+                            <div class="flex justify-between items-center mb-1">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-white/80 text-[11px]">视觉检测心跳频率</span>
+                                    <span class="text-white/25 text-[9px]"
+                                        x-show="proactiveDefaults[config.proactive.mode]">
+                                        (策略推荐: <span
+                                            x-text="proactiveDefaults[config.proactive.mode].interval_seconds"></span>s)
+                                    </span>
+                                </div>
+                                <span class="text-blue-400 text-[11px]"
+                                    x-text="config.proactive.interval_seconds + ' 秒'"></span>
+                            </div>
+                            <input type="range" min="10" max="600" step="10"
+                                x-model.number="config.proactive.interval_seconds" @change="saveGlobalConfig()"
+                                class="w-full accent-blue-500 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer">
+                            <div class="flex justify-between text-white/30 text-[9px] mt-1 pr-1">
+                                <span>10s (费token)</span>
+                                <span>10min</span>
+                            </div>
+                        </div>
+
+                        <!-- Cooldown -->
+                        <div class="mb-5">
+                            <div class="flex justify-between items-center mb-1">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-white/80 text-[11px]">主动发话冷却时间</span>
+                                    <span class="text-white/25 text-[9px]"
+                                        x-show="proactiveDefaults[config.proactive.mode]">
+                                        (策略推荐: <span
+                                            x-text="proactiveDefaults[config.proactive.mode].cooldown_minutes"></span>m)
+                                    </span>
+                                </div>
+                                <span class="text-blue-400 text-[11px]"
+                                    x-text="config.proactive.cooldown_minutes + ' 分钟'"></span>
+                            </div>
+                            <input type="range" min="1" max="60" step="1"
+                                x-model.number="config.proactive.cooldown_minutes" @change="saveGlobalConfig()"
+                                class="w-full accent-blue-500 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer">
+                            <div class="flex justify-between text-white/30 text-[9px] mt-1 pr-1">
+                                <span>1m (话痨)</span>
+                                <span>60m (社恐)</span>
+                            </div>
+                        </div>
+
+                        <!-- Mode -->
+                        <div class="mb-4">
+                            <p class="text-white/80 text-[11px] mb-2">交互干预策略 (点击切换推荐预设)</p>
+                            <div class="flex gap-2 p-1 bg-white/5 rounded-xl border border-white/10">
+                                <template x-for="m in ['silent', 'normal', 'lively']" :key="m">
+                                    <button @click="setProactiveMode(m)"
+                                        :class="config.proactive.mode === m ? 'bg-blue-500/20 text-blue-300 border-blue-500/30 shadow-sm' : 'text-white/40 hover:text-white/60 border-transparent'"
+                                        class="flex-1 py-1.5 px-2 rounded-lg text-xs font-medium transition-all border flex items-center justify-center">
+                                        <span
+                                            x-text="m === 'silent' ? '🤐 静默' : (m === 'normal' ? '😐 正常' : '🤩 活泼')"></span>
+                                    </button>
+                                </template>
+                            </div>
+                            <p class="text-white/30 text-[10px] mt-2 leading-relaxed">
+                                <span x-show="config.proactive.mode === 'silent'">静默: 建议长间隔与极长冷却。</span>
+                                <span x-show="config.proactive.mode === 'normal'">正常: 默认频率与平衡冷却，由模型决定是否开口。</span>
+                                <span x-show="config.proactive.mode === 'lively'">活泼: 短间隔高频感知，较短冷却，极具互动性。</span>
+                            </p>
+                        </div>
+
+                        <!-- Verbose Toggle -->
+                        <div
+                            class="flex items-center justify-between mt-3 mb-1 px-1 bg-white/5 p-2 rounded-xl border border-white/5">
+                            <span class="text-white/80 text-[11px]">在后端终端显示感知日志</span>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" x-model="config.proactive.verbose" @change="saveGlobalConfig()"
+                                    class="sr-only peer">
+                                <div
+                                    class="w-8 h-4 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-500">
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Store Panel -->
+            <div x-show="activePanel === 'store'" class="flex flex-col h-full w-full">
+                <div class="px-4 py-3 border-b border-white/10 flex justify-between items-center">
+                    <div>
+                        <p class="text-white font-semibold text-sm">VRM 资源商店</p>
+                        <p class="text-white/40 text-xs mt-0.5">下载新的看板娘与动作</p>
+                    </div>
+                    <button @click="loadStoreItems()" class="text-white/40 hover:text-white/80 p-1">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="flex-1 overflow-y-auto custom-scrollbar px-4 py-3"
+                    x-init="$watch('activePanel', val => { if(val === 'store') loadStoreItems() })">
+
+                    <div x-show="storeLoading" class="py-8 text-center text-white/30 text-sm">连接商店中...</div>
+
+                    <div x-show="!storeLoading">
+                        <!-- Category Tabs -->
+                        <div class="flex items-center gap-1.5 mb-4 overflow-x-auto pb-1 invisible-scrollbar">
+                            <template x-for="cat in categories" :key="cat">
+                                <button @click="selectedCategory = cat"
+                                    class="px-2.5 py-1 rounded-full text-[10px] font-medium transition-all whitespace-nowrap"
+                                    :class="selectedCategory === cat ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/20' : 'bg-white/5 text-white/40 hover:bg-white/10 hover:text-white/60'"
+                                    x-text="cat"></button>
+                            </template>
+                        </div>
+
+                        <p class="text-blue-300 text-xs font-semibold mb-3">人物模型 (Models)</p>
+                        <div class="grid grid-cols-3 gap-3 mb-6">
+                            <template x-for="item in filteredModels" :key="item.id">
+                                <div
+                                    class="bg-white/5 border border-white/10 rounded-xl overflow-hidden group flex flex-col h-full hover:bg-white/10 transition-colors">
+                                    <div
+                                        class="aspect-[3/4] bg-black/40 relative flex items-center justify-center object-cover shrink-0">
+                                        <template x-if="item.thumb">
+                                            <img :src="item.thumb"
+                                                class="absolute w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity">
+                                        </template>
+                                        <template x-if="!item.thumb">
+                                            <svg class="w-8 h-8 text-white/20" fill="none" stroke="currentColor"
+                                                viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                            </svg>
+                                        </template>
+                                        <!-- Homepage Link Overlay -->
+                                        <template x-if="item.homepage">
+                                            <a :href="item.homepage" target="_blank"
+                                                class="absolute top-1.5 right-1.5 p-1.5 bg-black/40 hover:bg-black/60 rounded-full text-white/80 hover:text-white transition-all z-10"
+                                                title="访问 VRoid Hub">
+                                                <svg class="w-3 h-3" fill="none" stroke="currentColor"
+                                                    viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                                        stroke-width="2"
+                                                        d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                </svg>
+                                            </a>
+                                        </template>
+                                    </div>
+                                    <div class="p-3 flex flex-col flex-1">
+                                        <div class="flex-1">
+                                            <p class="text-white/90 text-xs font-medium truncate" x-text="item.name">
+                                            </p>
+                                            <p class="text-white/40 text-[10px] truncate mb-2"
+                                                x-text="'@' + (item.author || '佚名')"></p>
+                                        </div>
+                                        <button
+                                            @click="item.url ? downloadStoreItem(item, 'model') : window.open(item.homepage, '_blank')"
+                                            :disabled="!!item.url && (downloadingItems.includes(item.id) || isDownloaded(item))"
+                                            class="w-full py-1.5 rounded-md text-[10px] font-medium transition-colors"
+                                            :class="{
+                                                'bg-white/10 text-white/40 cursor-not-allowed': !!item.url && (downloadingItems.includes(item.id) || isDownloaded(item)),
+                                                'bg-blue-500/20 text-blue-300 hover:bg-blue-500/40': !item.url || (!downloadingItems.includes(item.id) && !isDownloaded(item))
+                                            }">
+                                            <span
+                                                x-text="!item.url ? '前往查看' : (downloadingItems.includes(item.id) ? '下载中...' : (isDownloaded(item) ? '已下载' : '下载模型'))"></span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </template>
+                            <div x-show="filteredModels.length === 0"
+                                class="col-span-2 text-center text-white/30 text-[10px] py-2">该分类下暂无模型</div>
+                        </div>
+
+                        <p class="text-purple-300 text-xs font-semibold mb-3">待机动作 (Animations)</p>
+                        <div class="grid grid-cols-2 gap-3 mb-6">
+                            <template x-for="anim in filteredAnimations" :key="anim.id">
+                                <div
+                                    class="bg-white/5 border border-white/10 rounded-lg p-3 flex flex-col justify-between">
+                                    <div>
+                                        <p class="text-white/90 text-xs font-medium truncate mb-1" x-text="anim.name">
+                                        </p>
+                                    </div>
+                                    <button
+                                        @click="anim.url ? downloadStoreItem(anim, 'animation') : (anim.homepage && window.open(anim.homepage, '_blank'))"
+                                        :disabled="!!anim.url && (downloadingItems.includes(anim.id) || isAnimationDownloaded(anim))"
+                                        class="mt-2 w-full py-1.5 rounded-md text-[10px] font-medium transition-colors"
+                                        :class="{
+                                            'bg-white/10 text-white/40 cursor-not-allowed': !!anim.url && (downloadingItems.includes(anim.id) || isAnimationDownloaded(anim)),
+                                            'bg-purple-500/20 text-purple-300 hover:bg-purple-500/40': !anim.url || (!downloadingItems.includes(anim.id) && !isAnimationDownloaded(anim))
+                                        }">
+                                        <span
+                                            x-text="!anim.url ? '查看详情' : (downloadingItems.includes(anim.id) ? '下载中...' : (isAnimationDownloaded(anim) ? '已下载' : '获取动作'))"></span>
+                                    </button>
+                                </div>
+                            </template>
+                            <div x-show="filteredAnimations.length === 0"
+                                class="col-span-2 text-center text-white/30 text-[10px] py-2">该分类下暂无动作</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Debug Panel -->
+            <div x-show="activePanel === 'debug'" class="flex flex-col h-full">
+                <div class="px-4 py-3 border-b border-white/10">
+                    <div class="flex items-start justify-between">
+                        <div>
+                            <p class="text-white font-semibold text-sm">调试日志</p>
+                            <p class="text-white/40 text-xs mt-0.5" x-text="`${debugLogs.length} 条事件`"></p>
+                        </div>
+                        <button @click="debugLogs = []"
+                            class="text-white/30 hover:text-red-400 text-xs transition-colors mt-0.5">清空</button>
+                    </div>
+                    <!-- Context status expandable card -->
+                    <div x-show="contextStatus" @click="expandedContext = !expandedContext"
+                        class="mt-3 bg-cyan-950/40 border border-cyan-800/50 rounded p-2.5 cursor-pointer hover:bg-cyan-900/40 transition-colors group">
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="text-cyan-400 text-xs font-semibold shrink-0">当前感知状态</span>
+                            <svg class="w-3.5 h-3.5 text-cyan-600 group-hover:text-cyan-400 transition-all shrink-0"
+                                :class="expandedContext ? 'rotate-180' : ''" fill="none" stroke="currentColor"
+                                viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </div>
+                        <p class="text-cyan-200/80 text-xs mt-1.5 leading-relaxed select-text"
+                            :class="expandedContext ? 'break-words' : 'line-clamp-2'" x-text="contextStatus"></p>
+                    </div>
+                </div>
+                <div id="debug-container" class="flex-1 overflow-y-auto custom-scrollbar py-1 font-mono">
+                    <template x-for="(log, i) in debugLogs" :key="i">
+                        <div class="px-3 py-1 border-b border-white/5 hover:bg-white/5 transition-colors">
+                            <div class="flex items-start gap-2">
+                                <span class="text-white/25 text-xs leading-5 flex-shrink-0 w-10 text-right"
+                                    x-text="log.ts"></span>
+                                <span class="text-xs px-1.5 py-0.5 rounded flex-shrink-0 leading-4 mt-0.5" :class="{
+                                        'bg-yellow-500/20 text-yellow-300': log.type === 'status',
+                                        'bg-blue-500/20 text-blue-300': log.type === 'tool_call',
+                                        'bg-green-500/20 text-green-300': log.type === 'tool_result',
+                                        'bg-red-500/20 text-red-300': log.type === 'error',
+                                        'bg-purple-500/20 text-purple-300': log.type === 'message',
+                                        'bg-cyan-500/20 text-cyan-300': log.type === 'context',
+                                        'bg-emerald-500/20 text-emerald-300': log.type === 'system',
+                                        'bg-white/10 text-white/50': !['status','tool_call','tool_result','error','message','context','system'].includes(log.type)
+                                    }" x-text="log.type"></span>
+                                <span class="text-white/70 text-xs leading-relaxed break-all" x-text="log.text"></span>
+                            </div>
+                        </div>
+                    </template>
+                    <div x-show="debugLogs.length === 0" class="px-4 py-8 text-center text-white/20 text-xs">等待事件...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════════ MAIN CHAT AREA (Visible when activePanel === 'chat') ═══════════════ -->
+        <div class="flex-1 flex flex-col relative" x-show="activePanel === 'chat'">
+
+            <!-- Top status bar -->
+            <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-white/5 bg-white/5">
+                <span class="text-white/80 font-semibold text-sm tracking-wide">AI 伴伴</span>
+                <div class="flex items-center gap-1.5 rounded-full px-2 py-1">
+                    <div class="status-dot" :class="agentOnline ? 'bg-green-400' : 'bg-gray-400'"></div>
+                    <span class="text-white/60 text-xs" x-text="statusText"></span>
+                </div>
+            </div>
+
+            <!-- Chat messages -->
+            <div class="flex-1 flex flex-col pb-3 px-4 min-h-0">
+                <div id="chat-container" class="flex-1 flex flex-col gap-2 overflow-y-auto custom-scrollbar">
+                    <!-- Spacer: pushes messages to the bottom when few messages -->
+                    <div class="flex-1 min-h-4"></div>
+                    <template x-for="msg in messages" :key="msg.id">
+                        <!-- Standard Chat Bubble -->
+                        <div x-show="msg.role !== 'visual_log'" class="chat-bubble flex"
+                            :class="msg.role === 'user' ? 'justify-end' : 'justify-start'">
+                            <!-- AI avatar -->
+                            <div x-show="msg.role === 'assistant'"
+                                class="w-7 h-7 rounded-full bg-blue-400/30 border border-blue-300/40 flex items-center justify-center mr-2 flex-shrink-0 mt-auto mb-0.5">
+                                <svg class="w-3.5 h-3.5 text-blue-200" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
+                                        clip-rule="evenodd" />
+                                </svg>
+                            </div>
+                            <div :class="{
+                                    'bg-blue-500 text-white rounded-br-sm': msg.role === 'user',
+                                    'bg-white/85 text-gray-800 rounded-bl-sm': msg.role === 'assistant'
+                                }" class="px-4 py-2.5 rounded-2xl shadow-lg max-w-[78%] text-sm leading-relaxed">
+                                <div class="md-body" x-html="msg.html || msg.content"></div>
+                            </div>
+                        </div>
+
+                        <!-- Visual Log Inline Indicator -->
+                        <div x-show="msg.role === 'visual_log'" class="flex justify-center my-2">
+                            <div
+                                class="px-4 py-1.5 bg-black/20 border border-white/5 rounded-full backdrop-blur-sm max-w-[85%]">
+                                <div class="text-[11px] text-white/50 flex space-x-2 leading-relaxed break-words text-center md-body"
+                                    x-html="msg.html ? msg.html : (typeof marked !== 'undefined' ? marked.parseInline(msg.content||'') : msg.content)">
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+
+            <!-- Input area -->
+            <div class="px-4 pb-5">
+                <div id="chat-input-area"
+                    class="rounded-2xl p-2 flex items-end gap-2 shadow-2xl bg-white/5 border border-white/10">
+                    <div class="flex-1 px-3 py-1.5">
+                        <textarea x-model="inputText" @keydown.enter.prevent="handleEnter($event)"
+                            :disabled="isReceiving" placeholder="和我说说话吧..." rows="1"
+                            class="w-full bg-transparent outline-none text-white text-sm placeholder-white/30 resize-none leading-relaxed disabled:opacity-40"
+                            @input="autoResize($el)"></textarea>
+                    </div>
+                    <button @click="isReceiving ? abortReceiving() : sendMessage()"
+                        :disabled="!isReceiving && !inputText.trim()"
+                        :class="isReceiving ? 'bg-red-500 hover:bg-red-400' : 'bg-blue-500 hover:bg-blue-400'"
+                        :title="isReceiving ? '停止' : '发送'"
+                        class="p-2.5 disabled:bg-white/20 disabled:text-white/30 rounded-xl text-white transition-all transform hover:scale-105 active:scale-95 flex-shrink-0 mb-0.5">
+                        <template x-if="!isReceiving">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                            </svg>
+                        </template>
+                        <template x-if="isReceiving">
+                            <!-- Stop icon -->
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                                <rect x="6" y="6" width="12" height="12" rx="2" />
+                            </svg>
+                        </template>
+                    </button>
+                </div>
+                <p class="text-white/20 text-xs text-center mt-1.5">Enter 发送 · Shift+Enter 换行 · 生成中可点 ■ 停止</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════ ALPINE APP LOGIC ═══════════════ -->
+    <script>
+        function mainApp() {
+            return {
+                // UI state
+                activePanel: 'chat',
+                sidebarOpen: false,
+
+                // Agent status
+                agentOnline: false,
+                statusText: '连接中...',
+
+                // Chat
+                messages: [{ id: 'sys-0', role: 'assistant', content: '主人，我回来啦~！' }],
+                inputText: '',
+                isReceiving: false,
+                currentController: null,
+
+                // Debug log
+                debugLogs: [],
+                contextStatus: '',
+                expandedContext: false,
+
+                // Data
+                sessions: [],
+                diaryDates: [],
+                selectedDiaryContent: null,
+                personas: {},
+                config: {
+                    browser_choice: 'edge',
+                    proactive: { interval_seconds: 60, cooldown_minutes: 5, verbose: true, mode: 'normal' }
+                },
+                proactiveDefaults: {
+                    silent: { interval_seconds: 300, cooldown_minutes: 60 },
+                    normal: { interval_seconds: 120, cooldown_minutes: 15 },
+                    lively: { interval_seconds: 30, cooldown_minutes: 3 }
+                },
+
+                // Model Config Data
+                vrmModels: [],
+                vrmAnimations: [],
+                uploadingModel: false,
+                uploadStatus: '',
+                saveVrmStatus: '',    // 保存视角状态反馈 ('', 'saving', 'ok', 'error')
+
+                // Store state
+                storeLoading: false,
+                storeItems: { models: [], animations: [] },
+                downloadingItems: [],
+                selectedCategory: 'All',
+                categories: ['All', 'Vroid', 'Official', 'Basic'],
+
+                async init() {
+                    await this.checkStatus();
+                    setInterval(() => this.checkStatus(), 15000);
+                    this.loadSessions();
+                    this.loadDiaryDates();
+                    this.subscribeEvents();
+                    this.loadModels(); // Ensure local model list is available for 'isDownloaded' checks
+                    this.loadAnimations();
+                    // Load the current active session (restores chat history and debug logs after refresh)
+                    this.loadCurrentSession();
+                    this.loadGlobalConfig();
+                },
+
+                async loadGlobalConfig() {
+                    try {
+                        const r = await fetch('/api/config');
+                        if (r.ok) {
+                            const data = await r.json();
+                            if (data.proactive) {
+                                this.config.proactive = data.proactive;
+                            }
+                            // Keep a full copy for saving back
+                            this._fullConfig = data;
+                        }
+                    } catch (e) { console.error('Failed to load global config:', e); }
+                },
+
+                async setProactiveMode(m) {
+                    this.config.proactive.mode = m;
+                    const def = this.proactiveDefaults[m];
+                    if (def) {
+                        this.config.proactive.interval_seconds = def.interval_seconds;
+                        this.config.proactive.cooldown_minutes = def.cooldown_minutes;
+                    }
+                    await this.saveGlobalConfig();
+                },
+
+                async saveGlobalConfig() {
+                    try {
+                        if (!this._fullConfig) return;
+                        this._fullConfig.proactive = this.config.proactive;
+                        const r = await fetch('/api/config', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this._fullConfig)
+                        });
+                        if (r.ok) {
+                            this.pushLog('status', '⚙️ 主动感知系统配置已实时更新');
+                        }
+                    } catch (e) {
+                        this.pushLog('error', '❌ 保存配置失败: ' + e.message);
+                    }
+                },
+
+                async loadCurrentSession() {
+                    try {
+                        const r = await fetch('/api/sessions/current/info');
+                        if (r.ok) {
+                            const { session_id } = await r.json();
+                            if (session_id) await this.loadSession(session_id, true);
+                        }
+
+                        // Load common preferences as well
+                        const pref = await (await fetch('/api/config/preferences')).json();
+                        if (pref.browser_choice) {
+                            this.config.browser_choice = pref.browser_choice;
+                        }
+                    } catch { /* silently ignore startup failures */ }
+                },
+
+                subscribeEvents() {
+                    const es = new EventSource('/api/events');
+                    es.onmessage = (e) => {
+                        try {
+                            const ev = JSON.parse(e.data);
+                            if (ev.type === 'context') {
+                                const icon = { working: '💻', idle: '😴', error: '🔴', entertainment: '🎮' }[ev.status] || '❓';
+                                this.pushLog('context', `${icon} ${ev.status} — ${ev.summary}`);
+                                // Update the live status badge
+                                this.contextStatus = `${icon} ${ev.summary}`;
+                            } else if (ev.type === 'system') {
+                                this.pushLog('system', ev.text || '');
+                            } else if (ev.type === 'proactive' && ev.message) {
+                                // Only trigger proactive message if AI isn't currently speaking/thinking
+                                if (!this.isReceiving) {
+                                    this.pushLog('system', `👀 视觉系统触发主动搭话: ${ev.message.substring(0, 20)}...`);
+                                    this.inputText = `[视觉感知主动触发] ${ev.message}`;
+                                    // true indicates it's a proactive background trigger (so we don't render user thought bubble)
+                                    this.sendMessage(true);
+                                }
+                            }
+                        } catch { }
+                    };
+                    es.onerror = () => {
+                        // EventSource auto-reconnects; no need to handle manually
+                    };
+                },
+
+                async checkStatus() {
+                    try {
+                        const r = await fetch('/api/status');
+                        const data = await r.json();
+                        this.agentOnline = data.status === 'online';
+                        const persona = data.active_persona || 'unknown';
+                        this.statusText = this.agentOnline ? `在线 · ${persona}` : '离线';
+
+                        // Check if backend already has an initial context state
+                        if (data.last_context_summary && !this.contextStatus) {
+                            const icon = { working: '💻', idle: '😴', error: '🔴', entertainment: '🎮' }[data.last_context_status] || '❓';
+                            this.contextStatus = `${icon} ${data.last_context_summary}`;
+                        }
+                    } catch {
+                        this.agentOnline = false;
+                        this.statusText = '连接失败';
+                    }
+                },
+
+                async switchPanel(panel) {
+                    this.activePanel = panel;
+                    if (panel === 'history' && this.sessions.length === 0) this.loadSessions();
+                    if (panel === 'diary' && this.diaryDates.length === 0) this.loadDiaryDates();
+                    if (panel === 'persona' && Object.keys(this.personas).length === 0) this.loadPersona();
+                    if (panel === 'config' && this.vrmModels.length === 0) this.loadModels();
+                    // Auto-scroll debug panel when switching to it
+                    if (panel === 'debug') {
+                        this.$nextTick(() => {
+                            const d = document.getElementById('debug-container');
+                            if (d) d.scrollTop = d.scrollHeight;
+                        });
+                    }
+                },
+
+                async loadSessions() {
+                    try {
+                        this.sessions = await (await fetch('/api/sessions')).json();
+                    } catch { this.sessions = []; }
+                },
+
+                async loadSession(sessionId, keepPanel = false) {
+                    try {
+                        const data = await (await fetch(`/api/sessions/${sessionId}`)).json();
+
+                        // Clear current messages and debug logs for the new session
+                        this.debugLogs = [];
+                        const validMessages = [];
+
+                        data.messages.forEach((m, i) => {
+                            if (m.role === 'debug_log') {
+                                try {
+                                    const ev = JSON.parse(m.content);
+                                    let text = '';
+                                    if (ev.type === 'tool_call') {
+                                        text = `${ev.name}(${JSON.stringify(ev.params || {}).slice(0, 50)}...)`;
+                                    } else if (ev.type === 'tool_result') {
+                                        text = `${ev.name} ➔ ${ev.result}`;
+                                    } else {
+                                        text = ev.content || '';
+                                    }
+                                    this.debugLogs.push({ type: ev.type, text: text, ts: ev.ts || m.timestamp.split(' ')[1] });
+                                } catch { }
+                                return;
+                            }
+
+                            let raw = '';
+                            if (m.role === 'visual_log') {
+                                raw = m.content || '';
+                            } else {
+                                raw = Array.isArray(m.content)
+                                    ? m.content.filter(c => c.type === 'text').map(c => c.text).join(' ')
+                                    : (m.content || '');
+                            }
+                            validMessages.push({
+                                id: `h-${i}`,
+                                role: m.role,
+                                content: raw,
+                                html: m.role === 'assistant' ? this.mdRender(raw) : null
+                            });
+                        });
+
+                        this.messages = validMessages;
+                        if (!keepPanel) {
+                            this.activePanel = 'chat';
+                        }
+                        this.$nextTick(() => this.scrollToBottom());
+                    } catch { alert('加载对话失败。'); }
+                },
+
+                async loadDiaryDates() {
+                    try {
+                        this.diaryDates = await (await fetch('/api/diary')).json();
+                    } catch { this.diaryDates = []; }
+                },
+
+                async loadDiary(date) {
+                    try {
+                        const data = await (await fetch(`/api/diary/${date}`)).json();
+                        this.selectedDiaryContent = data.content;
+                    } catch { alert('加载日记失败。'); }
+                },
+
+                async loadPersona() {
+                    try {
+                        this.personas = await (await fetch('/api/persona')).json();
+                    } catch { this.personas = {}; }
+                },
+
+                // ─── VRM Model Management ──────────────────────────────
+                async loadModels() {
+                    try {
+                        const r = await fetch('/api/vrm/models');
+                        const data = await r.json();
+                        this.vrmModels = data.models || [];
+                        this.uploadStatus = '';
+                    } catch (e) {
+                        this.vrmModels = [];
+                        this.uploadStatus = '加载模型列表失败: ' + e.message;
+                    }
+                },
+
+                async loadAnimations() {
+                    try {
+                        const r = await fetch('/api/vrm/animations');
+                        const data = await r.json();
+                        this.vrmAnimations = data.animations || [];
+                    } catch (e) {
+                        this.vrmAnimations = [];
+                    }
+                },
+
+                async uploadModel(e) {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    if (!file.name.toLowerCase().endsWith('.vrm')) {
+                        this.uploadStatus = '❌ 请上传 .vrm 格式文件';
+                        return;
+                    }
+                    this.uploadingModel = true;
+                    this.uploadStatus = '上传中...';
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    try {
+                        const r = await fetch('/api/vrm/upload', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        const data = await r.json();
+                        if (r.ok) {
+                            this.uploadStatus = '✅ 上传成功';
+                            this.loadModels(); // Refresh list
+                            this.switchVrmModel(data.path); // Auto switch to newly uploaded model
+                        } else {
+                            this.uploadStatus = `❌ 上传失败: ${data.detail || '未知原因'}`;
+                        }
+                    } catch (err) {
+                        this.uploadStatus = `❌ 上传出错: ${err.message}`;
+                    } finally {
+                        this.uploadingModel = false;
+                        e.target.value = ''; // Reset input
+                        setTimeout(() => this.uploadStatus = '', 3000);
+                    }
+                },
+
+                switchVrmModel(modelPath) {
+                    const vm = window.appInstance?.vrmManager;
+                    if (!vm) return;
+
+                    // 切换前先捕获当前相机和模型的位置/缩放/旋转，切换后继承
+                    let snapshot = null;
+                    try {
+                        const cam = vm.camera;
+                        const scene = vm.currentModel?.scene;
+                        if (cam && scene) {
+                            snapshot = {
+                                // 模型位置与缩放
+                                posX: scene.position.x, posY: scene.position.y, posZ: scene.position.z,
+                                scaleX: scene.scale.x, scaleY: scene.scale.y, scaleZ: scene.scale.z,
+                                // 镜头位置与朝向
+                                camX: cam.position.x, camY: cam.position.y, camZ: cam.position.z,
+                                qx: cam.quaternion.x, qy: cam.quaternion.y,
+                                qz: cam.quaternion.z, qw: cam.quaternion.w,
+                                // 轨道控制器焦点
+                                tgtX: vm._cameraTarget?.x ?? 0,
+                                tgtY: vm._cameraTarget?.y ?? 1,
+                                tgtZ: vm._cameraTarget?.z ?? 0,
+                            };
+                        }
+                    } catch (_) { }
+
+                    this.pushLog('status', `正在热切换模型: ${modelPath}`);
+                    // 记录切换前的动画路径，避免 loadModel 内部的自动播放逻辑将其覆盖
+                    const savedActionUrl = vm.animation?._lastVrmaUrl;
+
+                    vm.loadModel(modelPath, { autoPlay: false }).then(() => {
+                        // loadModel 最后会调用 controls.update() 重置相机，
+                        // 需等下一帧渲染完再应用 snapshot，避免与其竞争
+                        const applySnapshot = () => {
+                            if (snapshot) {
+                                try {
+                                    const newScene = vm.currentModel?.scene;
+                                    const cam = vm.camera;
+                                    // 恢复模型位置和缩放
+                                    if (newScene) {
+                                        newScene.position.set(snapshot.posX, snapshot.posY, snapshot.posZ);
+                                        newScene.scale.set(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
+                                        // 恢复模型的旋转（如果有的话，尽管通常是镜头转）
+                                        newScene.rotation.set(0, 0, 0); // 确保没有残余的奇怪旋转
+                                    }
+
+                                    // 因为系统直接控制鼠标交互而没有使用 OrbitControls，所以必须直接设置相机的 quaternion
+                                    if (cam) {
+                                        cam.position.set(snapshot.camX, snapshot.camY, snapshot.camZ);
+                                        cam.quaternion.set(snapshot.qx, snapshot.qy, snapshot.qz, snapshot.qw);
+                                    }
+
+                                    if (window.THREE) {
+                                        vm._cameraTarget = new THREE.Vector3(snapshot.tgtX, snapshot.tgtY, snapshot.tgtZ);
+                                    }
+                                } catch (_) { }
+                            }
+
+                            // 切换成功后，重播上次记录的动作（如果有）
+                            const lastUrl = savedActionUrl || '/static/vrm/animation/wait03.vrma';
+                            if (vm.animation) {
+                                vm.animation.playVRMAAnimation(lastUrl, { loop: true, immediate: true }).catch(() => { });
+                            }
+                            this.pushLog('status', `模型切换成功! 已继承当前视角并恢复动作`);
+                        };
+
+                        // 延迟 2 帧以确保 loadModel 内部的所有 RAF 回调都完成
+                        requestAnimationFrame(() => requestAnimationFrame(applySnapshot));
+                    }).catch(e => {
+                        this.pushLog('error', `模型切换失败: ${e.message}`);
+                    });
+                },
+
+                triggerExpression(mood) {
+                    if (window.appInstance && window.appInstance.vrmManager && window.appInstance.vrmManager.expression) {
+                        window.appInstance.vrmManager.expression.setMood(mood);
+                        this.pushLog('status', `✨ 触发表情: ${mood}`);
+                    }
+                },
+
+                triggerAction(url) {
+                    if (window.appInstance && window.appInstance.vrmManager) {
+                        window.appInstance.vrmManager.playVRMAAnimation(url, { loop: true });
+                        this.pushLog('status', `💃 播放动作: ${url.split('/').pop()}`);
+                    }
+                },
+
+                isDownloaded(item) {
+                    // Check if a model with same name exists locally
+                    const fileName = item.name + '.vrm';
+                    return this.vrmModels.some(m => m.name === fileName);
+                },
+
+                async deleteModel(filename) {
+                    if (!confirm(`确定要删除模型 ${filename} 吗？`)) return;
+                    try {
+                        const r = await fetch(`/api/vrm/models/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+                        const data = await r.json();
+                        if (r.ok) {
+                            this.pushLog('status', `🗑️ 模型已删除: ${filename}`);
+                            await this.loadModels();
+                        } else {
+                            this.pushLog('error', `❌ 删除失败: ${data.detail || '未知原因'}`);
+                        }
+                    } catch (err) {
+                        this.pushLog('error', `❌ 删除出错: ${err.message}`);
+                    }
+                },
+
+                // 手动保存当前模型 + 场景位置 + 镜头视角
+                async saveVrmConfig() {
+                    const vm = window.appInstance?.vrmManager;
+                    if (!vm) {
+                        this.saveVrmStatus = 'error';
+                        setTimeout(() => this.saveVrmStatus = '', 3000);
+                        return;
+                    }
+                    this.saveVrmStatus = 'saving';
+                    try {
+                        const model = vm.currentModel;
+                        if (!model || !model.url || !model.scene) {
+                            throw new Error('模型尚未加载');
+                        }
+
+                        const scene = model.scene;
+                        const cam = vm.camera;
+
+                        // 收集模型状态
+                        const position = { x: scene.position.x, y: scene.position.y, z: scene.position.z };
+                        const scale = { x: scene.scale.x, y: scene.scale.y, z: scene.scale.z };
+                        const rotation = { x: scene.rotation.x, y: scene.rotation.y, z: scene.rotation.z };
+
+                        // 收集镜头状态（含四元数保证精确恢复）
+                        let cameraPosition = null;
+                        if (cam) {
+                            const tgt = vm._cameraTarget || { x: 0, y: 0, z: 0 };
+                            cameraPosition = {
+                                x: cam.position.x, y: cam.position.y, z: cam.position.z,
+                                qx: cam.quaternion.x, qy: cam.quaternion.y,
+                                qz: cam.quaternion.z, qw: cam.quaternion.w,
+                                targetX: tgt.x, targetY: tgt.y, targetZ: tgt.z
+                            };
+                        }
+
+                        const payload = {
+                            model_path: model.url,
+                            position,
+                            scale,
+                            rotation,
+                            viewport: { width: window.screen.width, height: window.screen.height },
+                            camera_position: cameraPosition
+                        };
+
+                        const r = await fetch('/api/config/preferences', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+
+                        this.saveVrmStatus = 'ok';
+                        this.pushLog('status', '💾 视角配置已保存，刷新后将自动恢复');
+                        this.pushLog('status', `📍 模型位置: x=${position.x.toFixed(3)}, y=${position.y.toFixed(3)}, z=${position.z.toFixed(3)}`);
+                        this.pushLog('status', `📏 模型缩放: x=${scale.x.toFixed(3)}, y=${scale.y.toFixed(3)}, z=${scale.z.toFixed(3)}`);
+                        this.pushLog('status', `🔄 模型旋转: x=${rotation.x.toFixed(3)}, y=${rotation.y.toFixed(3)}, z=${rotation.z.toFixed(3)}`);
+                        if (cameraPosition) {
+                            this.pushLog('status', `🎥 镜头位置: x=${cameraPosition.x.toFixed(3)}, y=${cameraPosition.y.toFixed(3)}, z=${cameraPosition.z.toFixed(3)}`);
+                        }
+                    } catch (e) {
+                        this.saveVrmStatus = 'error';
+                        this.pushLog('error', `保存视角失败: ${e.message}`);
+                    }
+                    setTimeout(() => this.saveVrmStatus = '', 3000);
+                },
+
+                // ─── Browser Preference Management ────────────────────────
+                async updateBrowserSetting(choice) {
+                    this.config.browser_choice = choice;
+                    try {
+                        // Using the same preferences endpoint to persist browser choice
+                        const r = await fetch('/api/config/preferences', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ browser_choice: choice })
+                        });
+                        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                        this.pushLog('status', `🌐 默认浏览器已切换为: ${choice === 'edge' ? 'Microsoft Edge' : 'Google Chrome'}`);
+                    } catch (e) {
+                        this.pushLog('error', `保存浏览器设置失败: ${e.message}`);
+                    }
+                },
+
+                // ─── VRM Store Management ──────────────────────────────
+                async loadStoreItems() {
+                    this.storeLoading = true;
+                    try {
+                        const r = await fetch('/api/store/list');
+                        this.storeItems = await r.json();
+                    } catch (e) {
+                        this.pushLog('error', `获取商店列表失败: ${e.message}`);
+                    } finally {
+                        this.storeLoading = false;
+                    }
+                },
+
+                async downloadStoreItem(item, type) {
+                    if (this.downloadingItems.includes(item.id)) return;
+                    this.downloadingItems.push(item.id);
+                    this.pushLog('status', `开始下载资源: ${item.name}`);
+
+                    try {
+                        const r = await fetch('/api/store/download', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                url: item.url,
+                                type: type,
+                                name: item.name
+                            })
+                        });
+                        const data = await r.json();
+                        if (!r.ok) throw new Error(data.detail || '下载请求失败');
+
+                        // Fake progress / delay logic since it's background downloaded by FastAPI
+                        this.pushLog('status', `${item.name} 已经在后台下载，请稍后在配置页面查看...`);
+
+                        setTimeout(() => {
+                            this.downloadingItems = this.downloadingItems.filter(id => id !== item.id);
+                            if (type === 'model') this.loadModels(); // Refresh available models
+                            if (type === 'animation') this.loadAnimations(); // Refresh available animations
+                            this.pushLog('status', `资源 ${item.name} 获取完成！`);
+                        }, 3000); // Wait 3s before clearing downloading state visually
+
+                    } catch (err) {
+                        this.pushLog('error', `下载 ${item.name} 失败: ${err.message}`);
+                        this.downloadingItems = this.downloadingItems.filter(id => id !== item.id);
+                    }
+                },
+
+                get filteredModels() {
+                    if (this.selectedCategory === 'All') return this.storeItems.models || [];
+                    return (this.storeItems.models || []).filter(item => item.category === this.selectedCategory);
+                },
+
+                isDownloaded(item) {
+                    if (!this.vrmModels) return false;
+                    return this.vrmModels.some(m => m.name === item.name + '.vrm');
+                },
+
+                isAnimationDownloaded(item) {
+                    if (!this.vrmAnimations) return false;
+                    return this.vrmAnimations.some(a => a.name === item.name);
+                },
+
+                get filteredAnimations() {
+                    if (this.selectedCategory === 'All') return this.storeItems.animations || [];
+                    return (this.storeItems.animations || []).filter(item => item.category === this.selectedCategory);
+                },
+
+                async newSession() {
+                    try {
+                        const r = await fetch('/api/sessions/new', { method: 'POST' });
+                        if (!r.ok) throw new Error('server error');
+                        this.messages = [{ id: 'sys-new', role: 'assistant', content: '开始新对话啊！有什么想聊的吗~' }];
+                        this.activePanel = 'chat';
+                        await this.loadSessions();
+                    } catch (e) { console.error('新建对话失败:', e); }
+                },
+
+                abortReceiving() {
+                    if (this.currentController) {
+                        this.currentController.abort();
+                        this.currentController = null;
+                        this.isReceiving = false;
+                    }
+                },
+
+                // ... (EventSource and sendMessage changes)
+                async sendMessage(isProactive = false) {
+                    const text = this.inputText.trim();
+                    if (!text || this.isReceiving) return;
+
+                    // 如果是主动触发，不真正在界面上显示[视觉感知主动触发]这个奇怪的用户气泡
+                    if (!isProactive) {
+                        this.messages.push({ id: 'u-' + Date.now(), role: 'user', content: text });
+                    }
+                    this.inputText = '';
+                    this.scrollToBottom();
+
+                    const aiId = 'a-' + Date.now();
+                    this.messages.push({ id: aiId, role: 'assistant', content: '<span class="text-gray-400 text-xs italic animate-pulse">思考中...</span>' });
+                    this.scrollToBottom();
+                    this.isReceiving = true;
+
+                    try {
+                        this.currentController = new AbortController();
+                        const response = await fetch('/api/chat/stream', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ message: text }),
+                            signal: this.currentController.signal
+                        });
+
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder('utf-8');
+                        let buffer = '';
+
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            buffer += decoder.decode(value, { stream: true });
+
+                            const lines = buffer.split('\n');
+                            buffer = lines.pop(); // Keep incomplete line
+
+                            for (const line of lines) {
+                                if (!line.startsWith('data: ')) continue;
+                                const dataStr = line.slice(6).trim();
+                                if (dataStr === '[DONE]') continue;
+
+                                try {
+                                    const ev = JSON.parse(dataStr);
+                                    const idx = this.messages.findIndex(m => m.id === aiId);
+                                    const ts = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+                                    // ── Route to debug log ──
+                                    if (ev.type === 'status') {
+                                        this.pushLog('status', ev.content || '');
+                                        if (idx !== -1) {
+                                            const cur = this.messages[idx].content;
+                                            if (cur.includes('animate-pulse') || cur.includes('🔧')) {
+                                                this.messages[idx].content = `<span class="text-gray-500 text-xs italic">${ev.content}</span>`;
+                                            }
+                                        }
+                                    } else if (ev.type === 'tool_call') {
+                                        const paramStr = ev.params ? JSON.stringify(ev.params, null, 2) : '';
+                                        this.pushLog('tool_call', `${ev.name}(${paramStr})`);
+                                        if (idx !== -1) {
+                                            this.messages[idx].content = `<span class="text-blue-400 text-xs italic">🔧 正在调用 ${ev.name}...</span>`;
+                                        }
+                                    } else if (ev.type === 'tool_result') {
+                                        this.pushLog('tool_result', `${ev.name} → ${ev.result || ''}`);
+                                    } else if (ev.type === 'message') {
+                                        this.pushLog('message', (ev.content || '').slice(0, 80) + ((ev.content || '').length > 80 ? '...' : ''));
+                                        if (idx !== -1) {
+                                            const raw = ev.content || '';
+                                            this.messages[idx].content = raw;
+                                            this.messages[idx].html = this.mdRender(raw);
+                                            this.scrollToBottom();
+                                        }
+                                    } else if (ev.type === 'system') {
+                                        this.pushLog('system', ev.text || '');
+                                    } else if (ev.type === 'error') {
+                                        this.pushLog('error', ev.content || '');
+                                        if (idx !== -1) {
+                                            this.messages[idx].content = `<span class="text-red-400 text-xs">❌ ${ev.content}</span>`;
+                                        }
+                                    }
+                                } catch { /* ignore parse errors */ }
+                            }
+                        }
+                    } catch (err) {
+                        if (err.name !== 'AbortError') {
+                            const idx = this.messages.findIndex(m => m.id === aiId);
+                            if (idx !== -1) this.messages[idx].content = '<span class="text-red-400 text-xs">❌ 网络异常，请稍后再试。</span>';
+                        }
+                    } finally {
+                        this.isReceiving = false;
+                        this.currentController = null;
+                        this.scrollToBottom();
+                    }
+                },
+
+                handleEnter(e) {
+                    if (e.shiftKey) return; // Allow Shift+Enter for newline
+                    this.sendMessage();
+                },
+
+                autoResize(el) {
+                    el.style.height = 'auto';
+                    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+                },
+
+                pushLog(type, text) {
+                    const ts = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    this.debugLogs.push({ type, text, ts });
+                    if (this.debugLogs.length > 500) this.debugLogs.shift();
+                    // Auto-scroll debug panel if open
+                    if (this.activePanel === 'debug') {
+                        this.$nextTick(() => {
+                            const d = document.getElementById('debug-container');
+                            if (d) d.scrollTop = d.scrollHeight;
+                        });
+                    }
+                },
+
+                mdRender(text) {
+                    if (!text || typeof text !== 'string') return text || '';
+                    // If it looks like a plain status span, don't run markdown on it
+                    if (text.startsWith('<span')) return text;
+                    try {
+                        return typeof marked !== 'undefined'
+                            ? marked.parse(text, { breaks: true, gfm: true })
+                            : text;
+                    } catch { return text; }
+                },
+
+                scrollToBottom() {
+                    this.$nextTick(() => {
+                        const c = document.getElementById('chat-container');
+                        if (c) c.scrollTop = c.scrollHeight;
+                    });
+                }
+            };
+        }
+    </script>
+
+    <!-- Step 1: Load Three.js & VRM via ES module and expose to window -->
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import * as THREE_VRM from '@pixiv/three-vrm';
+        import * as THREE_VRM_ANIM from '@pixiv/three-vrm-animation';
+        window.THREE = THREE;
+        window.GLTFLoader = GLTFLoader;
+        window.OrbitControls = OrbitControls;
+        window.THREE_VRM = THREE_VRM;
+        window.THREE_VRM_ANIM = THREE_VRM_ANIM;
+        console.log('[Three.js & VRM] core exposed to window.');
+        window.dispatchEvent(new CustomEvent('three-ready'));
+    </script>
+
+    <!-- Step 2: Load VRM traditional class scripts sequentially after three-ready -->
+    <script>
+        function loadVRMScripts() {
+            var scripts = [
+                '/static/js/vrm-core.js',
+                '/static/js/vrm-animation.js',
+                '/static/js/vrm-expression.js',
+                '/static/js/vrm-interaction.js',
+                '/static/js/vrm-manager.js',
+                '/static/js/app.js'
+            ];
+            var chain = Promise.resolve();
+            scripts.forEach(function (src) {
+                chain = chain.then(function () {
+                    return new Promise(function (resolve, reject) {
+                        var s = document.createElement('script');
+                        s.src = src;
+                        s.onload = resolve;
+                        s.onerror = function (e) { console.error('[VRM] load failed:', src, e); reject(e); };
+                        document.body.appendChild(s);
+                    });
+                });
+            });
+            chain.then(function () { console.log('[App] All 3D modules loaded.'); })
+                .catch(function (err) { console.error('[App] 3D load error:', err); });
+        }
+        if (window.THREE) {
+            loadVRMScripts();
+        } else {
+            window.addEventListener('three-ready', loadVRMScripts, { once: true });
+        }
+    </script>
+</body>
+
+</html>

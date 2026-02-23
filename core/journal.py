@@ -73,6 +73,54 @@ class JournalManager:
             return None
         return path.read_text(encoding="utf-8")
 
+    def list_dates(self) -> list:
+        """Return all journal dates sorted descending (newest first)."""
+        return sorted((p.stem for p in self.journal_dir.glob("*.md")), reverse=True)
+
+    def search(self, query: str, top_k: int = 3) -> list:
+        """
+        Keyword search across all journal files.
+        Returns [{"date": ..., "snippet": ...}] sorted by date descending.
+        Falls back to returning the most recent days if no keyword match is found.
+        """
+        q_lower = query.lower()
+        keywords = [w for w in q_lower.split() if len(w) > 1]
+        results = []
+
+        for date_str in self.list_dates():
+            content = self.read_day(date_str) or ""
+            content_lower = content.lower()
+            # Score by how many keywords appear
+            score = sum(1 for k in keywords if k in content_lower)
+            if score > 0:
+                # Find the first keyword hit for context extraction
+                first_hit_idx = min(
+                    (content_lower.find(k) for k in keywords if k in content_lower),
+                    default=0
+                )
+                start = max(0, first_hit_idx - 80)
+                end = min(len(content), first_hit_idx + 400)
+                snippet = ("..." if start > 0 else "") + content[start:end].strip() + "..."
+                results.append({"date": date_str, "snippet": snippet, "score": score})
+                if len(results) >= top_k:
+                    break
+
+        results.sort(key=lambda x: (-x["score"], x["date"]))
+        return results
+
+    def recent_days(self, n: int = 3) -> list:
+        """
+        Return the content of the most recent N journal days.
+        Returns [{"date": ..., "content": ...}].
+        """
+        out = []
+        for date_str in self.list_dates()[:n]:
+            content = self.read_day(date_str)
+            if content:
+                # Truncate to avoid huge context
+                out.append({"date": date_str, "content": content[:2000]})
+        return out
+
     def update_last_time(self, date_str: str = None) -> None:
         """
         Updates the timestamp of the last log entry to indicate a duration.

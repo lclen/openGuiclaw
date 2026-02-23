@@ -2,10 +2,30 @@
   "api": {
     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "api_key": "YOUR_API_KEY_HERE",
-    "model": "qwen-max",
-    "evolution_model": "qwen-turbo",
-    "max_tokens": 4096,
+    "model": "qwen3.5-plus",
+    "evolution_model": "qwen3.5-plus",
+    "max_tokens": 8192,
     "temperature": 0.7
+  },
+  "vision": {
+    "api_key": "YOUR_VISION_API_KEY",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "model": "qwen-vl-plus"
+  },
+  "image_analyzer": {
+    "api_key": "IMAGE_PARSING_KEY",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "model": "qwen-vl-max"
+  },
+  "embedding": {
+    "api_key": "YOUR_EMBEDDING_KEY",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "model": "text-embedding-v4"
+  },
+  "autogui": {
+    "base_url": "https://coding.dashscope.aliyuncs.com/v1",
+    "api_key": "YOUR_AUTO_GUI_KEY",
+    "model": "qwen3.5-plus"
   },
   "screen": {
     "capture_quality": 0.95,
@@ -16,9 +36,10 @@
     "delay_between_actions": 1.0,
     "confidence_threshold": 0.7
   },
-  "vision": {
-    "api_key": "YOUR_VISION_API_KEY",
-    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "model": "qwen-vl-plus"
+  "proactive": {
+    "interval_seconds": 300,
+    "cooldown_minutes": 30,
+    "verbose": true,
+    "mode": "normal"
   }
 }

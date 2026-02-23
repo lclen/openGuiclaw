@@ -97,11 +97,52 @@ class Agent:
             base_url=api_cfg["base_url"],
             api_key=api_cfg["api_key"],
         )
-        self.model = api_cfg["model"]
+        self.model = api_cfg.get("model", "qwen-max") # Default to qwen-max if not specified
+        
+        # Scheduled vision model (for screen auto-analysis) -> reads from 'vision' section
+        vision_cfg = self.config.get("vision", {})
+        self.vision_model = vision_cfg.get("model", "qwen-vl-plus")
+        if vision_cfg.get("api_key") and vision_cfg.get("base_url"):
+            self.vision_client = OpenAI(
+                base_url=vision_cfg["base_url"],
+                api_key=vision_cfg["api_key"],
+            )
+        else:
+            self.vision_client = self.client
+        
+        # User upload image parsing model -> reads from 'image_analyzer', fallback to 'vision', fallback to main model
+        analyzer_cfg = self.config.get("image_analyzer", vision_cfg)
+        self.image_analyzer_model = analyzer_cfg.get("model", self.vision_model) if analyzer_cfg else self.model
+        
+        # Create a separate image analyzer client if a dedicated endpoint is configured
+        # AND it's actually different from the main client config.
+        # This prevents unnecessary proxy routing when models are identical.
+        has_analyzer_cfg = analyzer_cfg.get("api_key") and analyzer_cfg.get("base_url")
+        is_same_as_main = (
+            analyzer_cfg.get("api_key") == api_cfg.get("api_key") and
+            analyzer_cfg.get("base_url") == api_cfg.get("base_url") and
+            self.image_analyzer_model == self.model
+        )
+
+        if has_analyzer_cfg and not is_same_as_main:
+            self.image_analyzer_client = OpenAI(
+                base_url=analyzer_cfg["base_url"],
+                api_key=analyzer_cfg["api_key"],
+            )
+            print(f"  [OK] 专属图片解析模型已加载: {self.image_analyzer_model}")
+        else:
+            # Fallback or Omni-Modal: use the same client as the main model
+            # This ensures (self.image_analyzer_client is self.client) is True
+            self.image_analyzer_client = self.client
+            # Ensure model name matches for the omni case if we just used fallback
+            if not has_analyzer_cfg:
+                self.image_analyzer_model = self.model
+            print(f"  [OK] 视觉能力已整合至主模型: {self.model}")
+            
         # New Feature: cheaper model for evolution (default to main model if missing)
         self.evolution_model = api_cfg.get("evolution_model", self.model)
         
-        self.max_tokens = api_cfg.get("max_tokens", 4096)
+        self.max_tokens = api_cfg.get("max_tokens", 8000) # Increased default max_tokens
         self.temperature = api_cfg.get("temperature", 0.7)
 
         # Load persona
@@ -175,12 +216,13 @@ class Agent:
 
         # ContextManager (set by main.py after init)
         self.context = None  # type: Optional[Any]
-
-        # Start built-in background tasks ONLY if auto_evolve is True
+        self.event_queue = None # type: Optional[Any] (set by lifespan in server.py)
+          # Start built-in background tasks ONLY if auto_evolve is True
         self.last_interaction_date = time.strftime("%Y-%m-%d")
-        if self.auto_evolve:
-            # ── Startup: check if yesterday's journal needs processing ──
-            self._startup_evolution()
+        # Background tasks should be started manually via `start_background_tasks()` 
+        # after plugin loading is complete, to prevent module import deadlocks.
+        
+        print(f"  [OK] Agent 已启动 (Memory: {len(self.memory.list_all())}, Session: {self.sessions.current.session_id})")
             
         # Scan local skills for Native Skill Cataloging
         self._local_skills_catalog = self._scan_local_skills()
@@ -194,6 +236,23 @@ class Agent:
             threading.Thread(
                 target=self._backfill_vectors, daemon=True, name="VectorBackfill"
             ).start()
+
+    def start_background_tasks(self):
+        """启动后台任务（如进化循环）。必须在插件加载完成后调用，以避免模块导入死锁，并增加延迟以避开启动时的 API 高峰。"""
+        import time
+        def _delayed_start():
+            # 增加 10 秒初始延迟，避开系统刚启动时的视觉上下文分析等 API 爆发期
+            time.sleep(10)
+            if self.auto_evolve:
+                # ── 启动：检查过去几天的日志是否需要处理 ──
+                self._startup_evolution()
+                # ── 后台线程：定期跨天进化检查 ──
+                # 注意：_evolution_loop 内部已有 time.sleep(60)，所以直接启动即可
+                threading.Thread(
+                    target=self._evolution_loop, daemon=True, name="EvolutionLoop"
+                ).start()
+        
+        threading.Thread(target=_delayed_start, daemon=True, name="DelayedStartup").start()
 
     def _scan_local_skills(self) -> dict:
         """Scan local directories for SKILL.md and build a catalog."""
@@ -242,6 +301,14 @@ class Agent:
         if not user_query or not self._local_skills_catalog:
             return []
         import re
+        # Handle multimodal list input: extract text parts only
+        if isinstance(user_query, list):
+            user_query = " ".join(
+                item.get("text", "") for item in user_query
+                if isinstance(item, dict) and item.get("type") == "text"
+            )
+        if not user_query:
+            return []
         # Extract meaningful words (>3 chars) from the query
         words = set(w.lower() for w in re.split(r'[\s，。？！、（）]+', user_query) if len(w) > 3)
         hits = []
@@ -348,12 +415,24 @@ class Agent:
         def search_memory(query: str):
             import concurrent.futures
 
+            def _search_journal():
+                results = self.journal.search(query, top_k=3)
+                if results:
+                    lines = [f"### {item['date']}\n{item['snippet']}" for item in results]
+                    return "【对话日志摘要 (Journal)】\n" + "\n\n".join(lines)
+                # 关键词未命中时，回退到最近 2 天的日志摘要
+                recent = self.journal.recent_days(n=2)
+                if recent:
+                    lines = [f"### {item['date']} (最近日志)\n{item['content']}" for item in recent]
+                    return "【对话日志摘要 (最近 2 天)】\n" + "\n\n".join(lines)
+                return "对话日志：无记录。"
+
             def _search_diary():
-                results = self.diary.search(query, top_k=3)
-                if not results:
-                    return "日记：无相关记录。"
-                lines = [f"### {item['date']}\n{item['snippet']}" for item in results]
-                return "【日记捕获】\n" + "\n\n".join(lines)
+                results = self.diary.search(query, top_k=2)
+                if results:
+                    lines = [f"### {item['date']}\n{item['snippet']}" for item in results]
+                    return "【AI 日记】\n" + "\n\n".join(lines)
+                return "AI 日记：无相关记录。"
 
             def _search_vector():
                 results = self.memory.search(query, top_k=5)
@@ -368,18 +447,21 @@ class Agent:
                 context = self.kg.context_for_entity(query)
                 return context if context else f"知识图谱：未找到与 '{query}' 的关联信息。"
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-                f_diary = executor.submit(_search_diary)
-                f_vector = executor.submit(_search_vector)
-                f_kg = executor.submit(_search_kg)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                f_journal = executor.submit(_search_journal)
+                f_diary   = executor.submit(_search_diary)
+                f_vector  = executor.submit(_search_vector)
+                f_kg      = executor.submit(_search_kg)
 
-                res_diary = f_diary.result()
-                res_vector = f_vector.result()
-                res_kg = f_kg.result()
+                res_journal = f_journal.result()
+                res_diary   = f_diary.result()
+                res_vector  = f_vector.result()
+                res_kg      = f_kg.result()
 
             report = (
                 f"### 统一搜索结果雷达：'{query}'\n\n"
-                f"{res_diary}\n\n"
+                f"{res_journal}\n\n"
+                f"---\n{res_diary}\n\n"
                 f"---\n{res_vector}\n\n"
                 f"---\n{res_kg}"
             )
@@ -783,7 +865,12 @@ class Agent:
         if user_query and self.memory._vector_store:
             # Instead of injecting the entire memory database, we only inject contextually relevant facts.
             try:
-                related_mems = self.memory.search(user_query, top_k=3)
+                # If user_query is a list (multimodal), extract text parts for search
+                search_query_text = user_query
+                if isinstance(user_query, list):
+                    search_query_text = " ".join([item.get("text", "") for item in user_query if item.get("type") == "text"])
+
+                related_mems = self.memory.search(search_query_text, top_k=3)
                 if related_mems:
                     mem_lines = [f"- {m.content}" for m in related_mems]
                     mem_ctx = "# 相关长期记忆 (Context)\n" + "\n".join(mem_lines)
@@ -881,10 +968,58 @@ class Agent:
             pass
             
         final_response = None
+        consecutive_errors = 0
+        
+        # --- Isolated Vision Proxy Analysis ---
+        # If the input contains an image and we have a dedicated image analyzer (different from main client),
+        # we decouple the process: First, the image analyzer interprets the image to text.
+        # Then, we replace the image payload with this text description, so the main model
+        # can process it normally with its full suite of tools.
+        current_model = self.model
+        if isinstance(user_input, list):
+            has_image = any(isinstance(item, dict) and item.get("type") == "image_url" for item in user_input)
+            
+            if has_image:
+                if self.image_analyzer_client is not self.client:
+                    # Vision Proxy Mode: Use the dedicated analyzer to "read" the image
+                    print(f"  👁️ [Vision Proxy] 正在请求专属视觉模型 {self.image_analyzer_model} 分析图像...")
+                    try:
+                        # Construct a temporary payload for the vision model
+                        proxy_messages = [{"role": "user", "content": user_input}]
+                        
+                        proxy_resp = self.image_analyzer_client.chat.completions.create(
+                            model=self.image_analyzer_model,
+                            messages=proxy_messages,
+                            max_tokens=2000,
+                            temperature=0.3
+                        )
+                        
+                        image_description = proxy_resp.choices[0].message.content or "未能识别图片内容。"
+                        print(f"  👁️ [Vision Proxy] 图像解析完成，长度: {len(image_description)} 字符。正在交由主中枢处理...")
+                        
+                        # Extract the original text prompt from the user
+                        original_prompt = "阅读这张图片"
+                        for item in user_input:
+                            if isinstance(item, dict) and item.get("type") == "text":
+                                original_prompt = item.get("text", original_prompt)
+                                
+                        # Replace the list payload with a text equivalent for the main model
+                        new_user_input = f"【视觉感知代理的图像分析报告】\n{image_description}\n\n【用户的原始请求】\n{original_prompt}"
+                        
+                        # Update the messages array to remove the base64 payload and replace with text
+                        messages[-1] = {"role": "user", "content": new_user_input}
+                        
+                    except Exception as e:
+                        print(f"  ❌ [Vision Proxy] 图像解析失败: {e}")
+                        # Fallback to passing the array directly to the main model if the proxy fails
+                        pass
+                else:
+                    # Unified Model Mode: The main model is omni-modal, handle it directly
+                    print(f"  👁️ [Omni-Modal] 主模型将直接吞入多模态数据并保持 Tool 权限...")
 
         for _ in range(max_tool_rounds):
             response = self.client.chat.completions.create(
-                model=self.model,
+                model=current_model,
                 messages=messages,
                 tools=tools if tools else None,
                 tool_choice="auto" if tools else None,
@@ -909,6 +1044,7 @@ class Agent:
                 messages.append(assistant_dict)
 
                 # Execute each tool call
+                round_had_error = False
                 for tc in msg.tool_calls:
                     name = tc.function.name
                     try:
@@ -925,12 +1061,26 @@ class Agent:
                         result = str(result)
                     print(f"  [Result] {result[:120]}")
 
+                    if result.strip().startswith("❌") or "Traceback (most recent call last):" in result:
+                        round_had_error = True
+
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "name": name,
                         "content": result,
                     })
+                
+                if round_had_error:
+                    consecutive_errors += 1
+                else:
+                    consecutive_errors = 0
+                    
+                if consecutive_errors >= 3:
+                    print(f"  [System] ⚠️ 触发安全跳出：连错 {consecutive_errors} 次，强行中止 LLM 思考循环。")
+                    final_response = "⚠️ **执行安全中止**：检测到连续多次调用工具报错。为防止消耗过多 Token 或陷入死循环，已主动停止任务。建议您检查日志或调整指令后重试。"
+                    break
+
                 # Continue loop so LLM sees tool results
                 continue
 
@@ -951,53 +1101,255 @@ class Agent:
 
         return final_response
 
+    async def chat_stream(self, user_input: str):
+        """
+        Stream a single user turn using an async generator.
+        Yields dictionaries suitable for SSE containing state updates and Markdown text.
+        """
+        import asyncio
+        import json
+        
+        session = self.sessions.current
+        system_prompt = self._build_system_prompt(user_input)
+
+        if self.context is not None:
+            self.context.notify_user_replied()
+
+        messages: List[Dict[str, Any]] = [
+            {"role": "system", "content": system_prompt}
+        ]
+        messages.extend(session.get_history())
+        messages.append({"role": "user", "content": user_input})
+
+        tools = self.skills.get_tool_definitions()
+        
+        max_tool_rounds = 15
+        try:
+            import plugins.plan_handler as _ph
+            if _ph._manager.active_plan:
+                max_tool_rounds = 40
+        except Exception:
+            pass
+            
+        final_response = None
+        consecutive_errors = 0
+        current_model = self.model
+        
+        def _yield_event(event_dict: dict) -> str:
+            if "ts" not in event_dict:
+                import time
+                event_dict["ts"] = time.strftime("%H:%M:%S")
+            session.add_message("debug_log", json.dumps(event_dict, ensure_ascii=False))
+            self.sessions.save()
+            return json.dumps(event_dict, ensure_ascii=False)
+        
+        # --- Isolated Vision Proxy Analysis ---
+        if isinstance(user_input, list):
+            has_image = any(isinstance(item, dict) and item.get("type") == "image_url" for item in user_input)
+            if has_image and self.image_analyzer_client is not self.client:
+                yield _yield_event({"type": "status", "content": f"正在请求视觉分析模型 {self.image_analyzer_model}..."})
+                try:
+                    proxy_messages = [{"role": "user", "content": user_input}]
+                    loop = asyncio.get_event_loop()
+                    proxy_resp = await loop.run_in_executor(
+                        None, 
+                        lambda: self.image_analyzer_client.chat.completions.create(
+                            model=self.image_analyzer_model,
+                            messages=proxy_messages,
+                            max_tokens=2000,
+                            temperature=0.3
+                        )
+                    )
+                    image_description = proxy_resp.choices[0].message.content or "未能识别图片内容。"
+                    
+                    original_prompt = "阅读这张图片"
+                    for item in user_input:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            original_prompt = item.get("text", original_prompt)
+                            
+                    new_user_input = f"【视觉感知代理的图像分析报告】\n{image_description}\n\n【用户的原始请求】\n{original_prompt}"
+                    messages[-1] = {"role": "user", "content": new_user_input}
+                    yield _yield_event({"type": "status", "content": "视觉分析完成，交由主中枢处理..."})
+                except Exception as e:
+                    yield _yield_event({"type": "error", "content": f"图像解析失败: {e}"})
+
+        tool_errors_history = []
+
+        for round_idx in range(max_tool_rounds):
+            yield _yield_event({"type": "status", "content": "🤔 思考中..."})
+            
+            loop = asyncio.get_event_loop()
+            try:
+                # We do NOT use streaming from the OpenAI API here because we need full tool call blocks.
+                # In the future, this can be optimized to stream the text token by token.
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.chat.completions.create(
+                        model=current_model,
+                        messages=messages,
+                        tools=tools if tools else None,
+                        tool_choice="auto" if tools else None,
+                        max_tokens=self.max_tokens,
+                        temperature=self.temperature,
+                        extra_body={"enable_search": True},
+                    )
+                )
+            except Exception as e:
+                yield _yield_event({"type": "error", "content": f"模型调用报错: {e}"})
+                break
+
+            msg = response.choices[0].message
+
+            if msg.tool_calls:
+                assistant_dict = msg.model_dump(exclude_unset=True)
+                for tc_dict in assistant_dict.get("tool_calls") or []:
+                    raw_args = tc_dict.get("function", {}).get("arguments", "{}")
+                    try:
+                        json.loads(raw_args)
+                    except (json.JSONDecodeError, TypeError):
+                        tc_dict["function"]["arguments"] = "{}"
+                messages.append(assistant_dict)
+
+                round_had_error = False
+                for tc in msg.tool_calls:
+                    name = tc.function.name
+                    try:
+                        params = json.loads(tc.function.arguments)
+                        if not isinstance(params, dict):
+                            params = {}
+                    except Exception:
+                        params = {}
+
+                    yield _yield_event({
+                        "type": "tool_call", 
+                        "name": name, 
+                        "params": params
+                    })
+                    
+                    try:
+                        result = await loop.run_in_executor(None, self.skills.execute, name, params)
+                        if not isinstance(result, str):
+                            result = str(result)
+                    except Exception as e:
+                        result = f"Traceback (most recent call last): {e}"
+
+                    yield _yield_event({
+                        "type": "tool_result",
+                        "name": name,
+                        "result": result[:500] + "..." if len(result) > 500 else result
+                    })
+
+                    if result.strip().startswith("❌") or "Traceback (most recent call last):" in result:
+                        round_had_error = True
+                        tool_errors_history.append(f"尝试 `{name}({json.dumps(params, ensure_ascii=False)[:100]})` 失败: {result[:200]}")
+
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "name": name,
+                        "content": result,
+                    })
+                
+                if round_had_error:
+                    consecutive_errors += 1
+                else:
+                    consecutive_errors = 0
+                    if tool_errors_history:
+                        success_calls = [f"`{tc.function.name}({tc.function.arguments[:100]})`" for tc in msg.tool_calls]
+                        experience_log = "**[System - 工具纠错经验自动记录]**\n- 失败尝试录:\n  - " + "\n  - ".join(tool_errors_history) + "\n- 最终解决思路: 成功改用 " + " | ".join(success_calls)
+                        self.journal.append(experience_log)
+                        tool_errors_history.clear()
+                    
+                if consecutive_errors >= 3:
+                    final_response = "⚠️ **执行安全中止**：连续多次调用工具报错已停止任务。"
+                    yield _yield_event({"type": "message", "content": final_response})
+                    break
+
+                continue
+
+            final_response = msg.content or ""
+            yield _yield_event({"type": "message", "content": final_response})
+            break
+
+        if final_response is None:
+            final_response = "（已完成工具操作，无额外回复。）"
+            yield _yield_event({"type": "message", "content": final_response})
+
+        session.add_message("user", user_input)
+        session.add_message("assistant", final_response)
+        self.sessions.save()
+        
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._check_all_triggers)
+
+    def _emit_system_event(self, content: str) -> None:
+        """Central hub to record and broadcast background system events."""
+        if self.event_queue:
+            import time
+            event = {
+                "type": "system",
+                "ts": time.strftime("%H:%M:%S"),
+                "text": content
+            }
+            self.event_queue.put(event)
+        print(f"[System] {content}")
+
+    def _evolution_loop(self) -> None:
+        """
+        Background thread to periodically check for cross-day evolution triggers.
+        This ensures evolution happens automatically at midnight even if no user interaction occurs.
+        """
+        import time
+        while True:
+            time.sleep(60)  # Check every 60 seconds
+            try:
+                self._check_all_triggers()
+            except Exception as e:
+                print(f"[EvolutionLoop] Error: {e}")
+
+    def _has_conversations(self, date_str: str) -> bool:
+        """Check if there are any real chat messages (not debug_logs) on a given date."""
+        for path in self.sessions.sessions_dir.glob("*.json"):
+            try:
+                import json
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                for m in data.get("messages", []):
+                    if m.get("timestamp", "").startswith(date_str) and m.get("role") != "debug_log":
+                        return True
+            except Exception:
+                continue
+        return False
+
     def _startup_evolution(self) -> None:
         """
-        On startup, check recent days for un-processed journals.
-        If yesterday (or earlier) has a journal but no diary, trigger evolution.
-        This fixes the bug where last_interaction_date is always set to today
-        on startup, making the cross-day detection in _check_all_triggers
-        never fire.
+        On startup, check recent days for un-processed journals or chat sessions.
         """
         from datetime import datetime, timedelta
 
         today = datetime.now().strftime("%Y-%m-%d")
-        # Look back up to 7 days to find unprocessed journals
+        # Look back up to 7 days
         for days_back in range(1, 8):
             check_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-            journal_content = self.journal.read_day(check_date)
-
-            if not journal_content or not journal_content.strip():
-                continue  # No journal for this day, keep looking further back
-
-            # Has journal — but was it already processed?
+            
+            # If a diary already exists, this day was fully completed.
             if self.diary.has_diary(check_date):
-                # Already processed (diary exists). Earlier days presumably also done.
+                # We assume earlier days were also processed.
                 break
 
-            # Found an un-processed journal!
-            print(f"[System] 🔍 发现 {check_date} 的日志尚未总结，已将其加入后台自我进化队列...")
+            journal_content = self.journal.read_day(check_date)
+            has_journal = bool(journal_content and journal_content.strip())
             
-            def _run_evolution(d=check_date):
-                try:
-                    # Step 1: 汇总当天所有聊天记录写入 journal
-                    self._summarize_day_conversations(d)
+            if not has_journal and not self._has_conversations(check_date):
+                continue  # No activity on this day
 
-                    # Step 2: 基于完整 journal (视觉日志 + 聊天总结) 生成 diary + 提取记忆
-                    new_mems = self.evolution.evolve_from_journal(d)
-                    if new_mems:
-                        print(f"\n[System] ✨ {d} 后台进化完成！习得了 {len(new_mems)} 条新记忆。\n> ", end="", flush=True)
-                    else:
-                        print(f"\n[System] {d} 后台进化完成，未发现新知识。\n> ", end="", flush=True)
-
-                    # Step 3: 尝试人设微调
-                    self.evolution.evolve_persona()
-                except Exception as e:
-                    import traceback
-                    print(f"\n[System] ⚠️ {d} 后台进化出错: {e}\n{traceback.format_exc()}\n> ", end="", flush=True)
-
-            # Start thread and don't block
-            threading.Thread(target=_run_evolution, daemon=True, name=f"Evo_{check_date}").start()
+            # Found an un-processed day!
+            self._emit_system_event(f"🔍 发现 {check_date} 的日志尚未总结，已将其加入后台自我进化队列...")
+            
+            # 串行处理历史遗留任务，每个日期之间增加间隔，防止 429 报错
+            _run_evolution(check_date)
+            import time
+            time.sleep(5) # 每个补做任务之间休息 5 秒
 
         # Set to today so _check_all_triggers works correctly for future cross-day
         self.last_interaction_date = today
@@ -1008,7 +1360,7 @@ class Agent:
         current_date = time.strftime("%Y-%m-%d")
         if current_date != self.last_interaction_date:
             prev_date = self.last_interaction_date
-            print(f"[System] 检测到跨天 ({prev_date} -> {current_date})，后台自我进化已启动。")
+            self._emit_system_event(f"检测到跨天 ({prev_date} -> {current_date})，后台自我进化已启动。")
 
             def _run_daily_evo(d=prev_date):
                 try:
@@ -1016,17 +1368,17 @@ class Agent:
                     self._summarize_day_conversations(d)
 
                     # Step 2: 基于完整 journal (视觉日志 + 聊天总结) 生成 diary + 提取记忆
-                    print(f"\n[System] 🧠 开始后台自我进化：分析 {d} 日志...\n> ", end="", flush=True)
+                    self._emit_system_event(f"🧠 开始后台自我进化：分析 {d} 日志...")
                     new_mems = self.evolution.evolve_from_journal(d)
                     if new_mems:
-                        print(f"\n[System] ✨ 后台进化完成！习得了 {len(new_mems)} 条新记忆。\n> ", end="", flush=True)
+                        self._emit_system_event(f"✨ 后台进化完成！习得了 {len(new_mems)} 条新记忆。")
                     else:
-                        print(f"\n[System] 后台进化完成，未通过日志发现新知识。\n> ", end="", flush=True)
+                        self._emit_system_event(f"✅ 后台进化完成，未通过日志发现新知识。")
 
                     # Step 3: 尝试人设微调
                     self.evolution.evolve_persona()
                 except Exception as e:
-                    print(f"\n[System] ⚠️ 跨天后台进化出错: {e}\n> ", end="", flush=True)
+                    self._emit_system_event(f"⚠️ 跨天后台进化出错: {e}")
 
             threading.Thread(target=_run_daily_evo, daemon=True, name=f"DailyEvo_{prev_date}").start()
 
@@ -1058,18 +1410,39 @@ class Agent:
         if not pruned:
             return
 
-        # Format for summarization
-        text_block = "\n".join([f"{m['role']}: {m['content']}" for m in pruned])
+        # Format for summarization (ignore debug logs)
+        filtered_pruned = [m for m in pruned if m["role"] != "debug_log"]
+        if not filtered_pruned:
+            print(f"[System] 滚动收尾清理：释放了 {len(pruned)} 条调试信息（无实质内容需总结）。")
+            self.sessions.save()
+            return
+            
+        text_block = "\n".join([f"{m['role']}: {m['content']}" for m in filtered_pruned])
         
         # 1. Summarize
         try:
             prompt = f"请总结以下对话片段，提取关键信息（意图、操作、结果），作为'前情提要'。保留关键事实，去除闲聊。\n\n{text_block}"
-            resp = self.client.chat.completions.create(
-                model=self.evolution_model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=500,
-            )
-            summary_text = resp.choices[0].message.content
+            
+            # Simple retry for 429
+            retry_count = 0
+            while retry_count < 3:
+                try:
+                    resp = self.client.chat.completions.create(
+                        model=self.evolution_model,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=500,
+                    )
+                    summary_text = resp.choices[0].message.content
+                    break
+                except Exception as e:
+                    if "429" in str(e) or "limit" in str(e).lower():
+                        retry_count += 1
+                        import time
+                        time.sleep(5 * retry_count)
+                        continue
+                    raise e
+            else:
+                summary_text = "(Summary failed after retries)"
         except Exception as e:
             print(f"[System] 总结失败: {e}")
             summary_text = "(Summary failed)"
@@ -1094,15 +1467,16 @@ class Agent:
         """
         # 1. 遍历所有 session 文件，收集该日期的对话
         all_conversations = []
+        daily_sessions = []
         for path in sorted(self.sessions.sessions_dir.glob("*.json")):
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 messages = data.get("messages", [])
-                # 筛选该日期的消息
+                # Filter messages for the specific date and ignore debug logs
                 day_msgs = [
                     m for m in messages
-                    if m.get("timestamp", "").startswith(date_str)
+                    if m.get("timestamp", "").startswith(date_str) and m.get("role") != "debug_log"
                 ]
                 if day_msgs:
                     all_conversations.extend(day_msgs)
@@ -1113,10 +1487,10 @@ class Agent:
             print(f"[System] {date_str} 没有找到聊天记录，跳过对话总结。")
             return
 
-        # 按时间戳排序，确保多个 Session 合并时时间线正确
+        # Sort by timestamp to ensure chronological order across sessions
         all_conversations.sort(key=lambda m: m.get("timestamp", ""))
 
-        # 2. 格式化对话内容 (截断过长的单条消息)
+        # 2. Format conversation content (and sanitize multimodal payloads for text-only LLM)
         lines = []
         for m in all_conversations:
             role = m["role"]
@@ -1130,6 +1504,17 @@ class Agent:
                 role_str = role
                 
             content = m.get("content", "")
+            # Multimodal Payload Sanitization: Evolve model (Qwen-max) takes text only
+            if isinstance(content, list):
+                safe_text_parts = []
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get('type') == 'text':
+                            safe_text_parts.append(item.get('text', ''))
+                        elif item.get('type') == 'image_url':
+                            safe_text_parts.append('[图片附件]') # Replace image with a placeholder
+                content = " ".join(safe_text_parts)
+            
             if len(content) > 500:
                 content = content[:500] + "...(截断)"
             ts = m.get("timestamp", "").split(" ")[-1] if " " in m.get("timestamp", "") else ""
@@ -1143,17 +1528,17 @@ class Agent:
             prompt = (
                 f"请总结以下一天的人机聊天记录，按主题分类整理。\n"
                 f"每个主题下需要包含：\n"
-                f"1. 主题名称（如：代码调试、信息查询等）\n"
+                f"1. 主题名称（如：代码调试、工具记录等）\n"
                 f"2. 用户的问题或需求\n"
-                f"3. AI 的回答或操作\n"
+                f"3. AI 的回答与操作记录（特别是工具纠错记录，需要完整提炼出解决思路）\n"
                 f"保留具体事实，去除无意义的寒暄。用 Markdown 格式输出。\n"
-                f"总字数控制在 1000 字以内。\n\n"
+                f"总字数控制在 2500 字以内。\n\n"
                 f"## {date_str} 聊天记录\n{conversation_text}"
             )
             resp = self.client.chat.completions.create(
                 model=self.evolution_model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=5000,
+                max_tokens=8000,
                 temperature=0.3,
             )
             summary = resp.choices[0].message.content.strip()

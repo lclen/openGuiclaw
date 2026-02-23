@@ -77,18 +77,24 @@ class ContextManager:
         notification_queue: Optional[queue.Queue] = None,
         cooldown_minutes: int = 30,
         get_history_func: Optional[Callable] = None,
+        proactive_config: Optional[dict] = None,
     ):
         self.client = client
         self.vision_model = vision_model
         self.add_visual_log_func = add_visual_log_func
         self.get_visual_history_func = get_visual_history_func
         self.update_visual_log_func = update_visual_log_func
-        self.interval = interval_seconds
+        
+        cfg = proactive_config or {}
+        self.interval = cfg.get("interval_seconds", interval_seconds)
+        self.cooldown_minutes = cfg.get("cooldown_minutes", cooldown_minutes)
+        self.mode: str = cfg.get("mode", MODE_NORMAL)
+        self.verbose: bool = cfg.get("verbose", True)
+        
         self.notification_queue = notification_queue or queue.Queue()
-        self.cooldown_minutes = cooldown_minutes
         self.get_history_func = get_history_func
-        self.mode: str = MODE_NORMAL       # 默认普通模式
-        self.verbose: bool = True          # 是否在终端显示截屏日志（后期可在设置中关闭）
+        # 外部可以传入一个 log_queue 共享队列，用于将结果广播到前端
+        self.log_queue: Optional[queue.Queue] = None
 
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -123,6 +129,13 @@ class ContextManager:
         if mode not in (MODE_SILENT, MODE_NORMAL, MODE_LIVELY):
             raise ValueError(f"Unknown mode: {mode}")
         self.mode = mode
+        
+    def reload_config(self, cfg: dict) -> None:
+        """Dynamically reload proactive config without restarting thread."""
+        if "interval_seconds" in cfg: self.interval = cfg["interval_seconds"]
+        if "cooldown_minutes" in cfg: self.cooldown_minutes = cfg["cooldown_minutes"]
+        if "mode" in cfg: self.set_mode(cfg["mode"])
+        if "verbose" in cfg: self.verbose = cfg["verbose"]
 
     def notify_user_replied(self) -> None:
         """Call this when user sends ANY message, to reset cooldown."""
@@ -155,7 +168,15 @@ class ContextManager:
         if self.get_history_func:
             msgs = self.get_history_func()
             if msgs:
-                chat_lines = [f"- {m['role']}: {m['content'][:100]}" for m in msgs]
+                def _extract_text(content) -> str:
+                    """从 content 中提取纯文字，过滤掉 image_url 等大型数据。"""
+                    if isinstance(content, str):
+                        return content[:100]
+                    if isinstance(content, list):
+                        parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+                        return " ".join(parts)[:100]
+                    return ""
+                chat_lines = [f"- {m['role']}: {_extract_text(m['content'])}" for m in msgs]
                 history_text += "【最近聊天】\n" + "\n".join(chat_lines) + "\n"
         
         # 2. 视觉感知历史 (从 Session 读取最近)
@@ -180,6 +201,17 @@ class ContextManager:
             }.get(status, "❓")
             print(f"[Context] {status_icon} {status} — {summary[:60]}")
             print("You > ", end="", flush=True)  # 重新打印输入提示符
+
+        # 将分析结果推送到 log_queue，供前端 SSE 广播
+        if self.log_queue is not None:
+            ts2 = time.strftime("%H:%M:%S")
+            self.log_queue.put({
+                "type": "context",
+                "status": status,
+                "summary": summary,
+                "needs_interaction": needs_interaction,
+                "ts": ts2,
+            })
 
         # ── 活泼度模式决策 ──────────────────────────────────────────
         if self.mode == MODE_SILENT:
@@ -262,30 +294,49 @@ class ContextManager:
         if history:
             prompt = f"### [历史上下文] ###\n{history}\n\n" + prompt
 
+        text = "{}"
         try:
-            response = self.client.chat.completions.create(
-                model=self.vision_model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
+            # Add simple retry for 429 errors
+            retry_count = 0
+            while retry_count < 3:
+                try:
+                    response = self.client.chat.completions.create(
+                        model=self.vision_model,
+                        messages=[
                             {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{screenshot_b64}"
-                                },
-                            },
-                        {
-                                "type": "text",
-                                "text": prompt,
-                        },
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": f"data:image/png;base64,{screenshot_b64}"
+                                        },
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": prompt,
+                                    },
+                                ],
+                            }
                         ],
-                    }
-                ],
-                max_tokens=300,
-                temperature=0.2,
-            )
-            text = response.choices[0].message.content or "{}"
+                        max_tokens=300,
+                        temperature=0.2,
+                    )
+                    text = response.choices[0].message.content or "{}"
+                    break
+                except Exception as e:
+                    err_msg = str(e).lower()
+                    if "429" in err_msg or "limit" in err_msg:
+                        retry_count += 1
+                        wait_time = 5 * retry_count
+                        if self.verbose:
+                            print(f"[Context] 遇到频率限制 (429)，{wait_time} 秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    raise e
+            else:
+                return None # Failed after retries
+
             # Strip code fences if present
             if "```" in text:
                 text = text.split("```")[-2] if "```" in text else text
@@ -320,10 +371,18 @@ class ContextManager:
             # Still in cooldown — user hasn't replied; stay quiet
             return
 
-        # Push message to queue
-        self.notification_queue.put({
+        payload = {
             "type": "proactive",
             "status": status,
             "message": message,
-        })
+        }
+
+        # Push message to CLI queue
+        self.notification_queue.put(payload)
+        
+        # ALSO push to SSE log_queue so Web UI gets it
+        if self.log_queue is not None:
+            self.log_queue.put(payload)
+            
         self._last_proactive_at = now
+

@@ -14,32 +14,31 @@
   - **优化**：引入类似 openakita 的 `PromptAssembler` 模式：系统提示词仅常驻“核心人设”与“User Profile”。只有触发特定关键词或工具时，才基于当前 `user_input` 实行 top-K 相关记忆的动态注入（而非全部塞入）。
   - **关于“动态注入”的解答**：动态注入指的是在每次用户发送消息时，将当前这句话（`user_input`）作为查询词，使用向量库搜索找出最相关的几条记忆（Top-3），并**临时**拼接到当次的系统提示词里。比如您说“我想吃水果”，AI会自动检索出“用户对芒果过敏”这条记忆片段临时注入，从而避免把所有不相关的记忆（如“喜欢蓝色”、“正在学Python”）全量塞进 Prompt 中，极大节省 Token 开销。
 - **廉价模型分流**：[self_evolution.py](file:///d:/qwen_autogui/core/self_evolution.py) 中的日志总结（[_summarize_day_conversations](file:///d:/qwen_autogui/core/agent.py#719-782)）、知识图谱提取和记忆提取每天消耗大量 Token。
-### 2. 引入 AI 性格切换功能 (Persona Manager) 与全局自我进化
-- **现状**：目前所有性格演化和基础设定都挤在唯一的 [PERSONA.md](file:///d:/qwen_autogui/PERSONA.md) 中，无法做多重性格切换。并且进化逻辑会直接修改人设文件，造成切换性格后丢失进化行为。
-- **优化**：
-  - 新建 `data/identities/` 文件夹，将不同的性格规范定义为独立且**不可变的**纯净文件（如 `default.md`）。
-  - 在 `agent.py` 中增加 `/persona <name>` 命令，允许用户在控制台热切换当前的 AI 性格。
-  - 新增 `data/interaction_habits.md` 全局文件：`SelfEvolution` 的“人设微调”功能不再污染具体的人设源文件，而是专门将习得的“用户交互习惯、沟通规则”积累在 `interaction_habits.md` 中。
-  - System Prompt 组装结构升级为：`不可变的具体人设文件` + `全局累积的互动习惯` + `UserProfile` + `短期对话记忆（动态注入）`。
+### 2. 引入 AI 性格切换功能 (Persona Manager) ✅ 已完成
+- **实现状态**：已完成
+- **实现方案**：
+  - 新建 `data/identities/` 文件夹，将不同的性格规范定义为独立文件。
+  - 在 `agent.py` 中增加 `/persona <name>` 命令，允许控制台热切换。
+  - 增加 `interaction_habits.md` 全局文件记录进化成果。
 
-### 3. 本地记忆分层架构 (Memory Stratification) - 借鉴 MemOS [新增计划]
+### 3. 本地记忆分层架构 (Memory Stratification) - 借鉴 MemOS [新增计划]✅ 已完成
 为了彻底解决“执行长计划时由于 Query 不包含关键字而遗忘用户偏好/规则”的现象，我们将对现有的扁平记忆与档案系统进行 **三层 (Objective, Subjective, Scene)** 架构深度改造。
 
-#### A. 核心高优记忆区 (Core Working Memory) -> 常驻注入
+#### A. 核心高优记忆区 (Core Working Memory) -> 常驻注入✅ 已完成
 我们将把原先单一的 `user_profile.json` 拆分成符合 MemOS 哲学的两大块，并**无条件前置注入**到每次 LLM 轮次的 System Prompt 开头，充当不可阻挡的防遗忘底座：
 - **Objective Memory (客观身份记忆)**：存放确定的事实。例如：`name`, `age`, `expertise`, `language_proficiency`。
 - **Subjective Memory (主观偏好记忆)**：存放非实体的指导原则。例如：习惯 (`interaction_pace`), 偏好 (`preference`: 比如“不要把文件写在测试目录”), 回应风格 (`response_style`)。
 - **机制改造**：修改 `core/agent.py` 的提示构建器，将 `data/user_profile.json` (现已升级为双层结构) 转化为 LLM 随时可见的“第一核心准则”。
 
-#### B. 场景与碎片记忆区 (Scene & Episodic Memory) -> 按需检索
+#### B. 场景与碎片记忆区 (Scene & Episodic Memory) -> 按需检索✅ 已完成
 - 过去的 `memory.jsonl` （包含海量日常琐碎事实、曾经的代码方案、过去发生的事件）将作为 **Scene Memory 的长期归档**。
 - 由于它们数量庞大，依然保留目前的 **Top-K 向量检索动态注入**。这样既保证了长期回忆的能力，又不会造成 Prompt Token 爆炸。
 
-#### C. 工具层统一操作 (Unified Operation)
+#### C. 工具层统一操作 (Unified Operation)✅ 已完成
 - 修改 `self_evolution.py` 或后台记忆提取流程：当大模型自行判定出用户的偏好（例如“不要用 gbk 编码”）时，直接以 JSON Patch 形式写入 `user_profile.json -> subjective_memory`。
 - 保留 `search_memory` 工具，专用于在执行任务时，深度探查过去的 Scene/Episodic 记忆。这就是完美的“核心底线不可违 + 历史细节自由查”闭环。
 
-### 4. 统一记忆搜索引擎 (Unified Search Tool) [计划新增]
+### 4. 统一记忆搜索引擎 (Unified Search Tool) [计划新增]✅ 已完成
 - **现状**：目前系统包含 `search_journal`、`recall` 和 `query_knowledge` 三个零碎的搜索工具，导致大模型在找寻信息时认知负荷大、频繁试错（API 来回调用耗时且消耗 Token）。
 - **业界调研**：
   - `openakita`：使用统一的 `search_memory` 工具，通过传入 `type`（如 fact, preference 等）在底层进行路由并统一返回。
@@ -53,23 +52,14 @@
 ### 5. 高阶核心技能拓展 (Advanced Skills Integration) [新计划]
 为了将 `qwen_autogui` 从“记录者”升级为“行动派”，我们将按序（从易到难、从底层到高层）集成以下 4 个超级核心技能：
 
-#### 阶段一：基础终端执行 (`execute_command`)
-- **实现方案**：在 `plugins/` 目录下新增 `system.py` 或 `shell.py`。
-- **关键细节**：
-  - 使用 `subprocess.run` 执行命令，**必须设定 `timeout`** 以防止类似 `top` 或 `ping -t` 这样的连续进程永久阻塞 AI 的线程。
-  - 返回 stderr, stdout 和 returncode，让模型拥有完整的错误排查（Debugging）视野。
+#### 阶段一：基础终端执行 (`execute_command`) ✅ 已完成
+- **实现方案**：已在 `plugins/system.py` 实现安全的 `subprocess.run` 命令拦截与输出捕获。
 
-#### 阶段二：定时间轴管理 (`schedule_task`)
-- **实现方案**：新增一个轻量级的异步定时器或者利用 `threading.Timer`。
-- **关键细节**：
-  - 提供 `add_timer(minutes, message)` 接口。
-  - 时间到了之后，将消息直接推入 `ContextManager` 原有自带的 `notification_queue`，这样能在终端以及未来的 UI 里直接弹送给用户。
+#### 阶段二：定时间轴管理 (`schedule_task`) ✅ 已完成
+- **实现方案**：已在 `plugins/scheduled.py` 实现。支持异步闹钟与控制台提醒。
 
-#### 阶段三：动态技能自举系统 (`skill_creator`)
-- **实现方案**：在 `plugins/` 目录下提供一个极其危险但强大的技能：`create_plugin(plugin_name, code_content)`。
-- **关键细节**：
-  - 该技能允许大模型将一段经过思考生成的 Python 代码直接写入 `plugins/xxx.py`。
-  - 依赖于我们在 `SkillsManager` 里实现/优化过的热加载（Hot-reload）机制，从而使 AI 在下一秒就能使用自己刚刚编写出来的能力（比如“帮我写个查基金的插件”，写完马上查）。
+#### 阶段三：动态技能自举系统 (`skill_creator`) ✅ 已完成
+- **实现方案**：已在 `plugins/skill_creator.py` 实现。支持 AI 自主编写 Python 插件并热加载。
 
 #### 阶段四：MCP 协议客户端网关 (Model Context Protocol) ✅ 已完成
 - **实现状态**：✅ 已完成
@@ -95,20 +85,71 @@
 ### 6. 终极自主性拓展 (Ultimate Autonomy Integration) [最新进阶计划]
 基于前面的底层能力，我们将实现真正的 Agent 化控制：
 
-#### 阶段一：安全状态沙箱 (`sandbox_repl`)
-- **思路**：用 `jupyter_client` 或手写一个带 `Popen` 的后台存活 Python REPL 进程。
-- **目标**：模型可以传入代码并在同一个隔离的内存环境中跑多轮数据分析，保存变量状态（如 df = pd.read_csv... 然后下一步 df.describe()），而不是每次都开新 Shell。
+#### 阶段一：安全状态沙箱 (`sandbox_repl`) ✅ 已完成
+- **实现方案**：已在 `plugins/sandbox_repl.py` 实现。支持多轮变量持久化。
 
-#### 阶段二：长链条多步任务规划器 (`plan_handler`)
-- **思路**：参考 `openakita` 的 `plan.py`。
-- **目标**：新增一个任务管理器，遇到复杂要求时，能先调用 `create_plan(steps)` 生成有明确 ID 的任务流。然后系统在每执行完一步后，强制要求使用 `update_plan_step` 推进。提升它应对超长目标的专注力。
+#### 阶段二：长链条多步任务规划器 (`plan_handler`) ✅ 已完成
+- **实现方案**：已在 `plugins/plan_handler.py` 实现。支持任务流拆解、状态追踪与进度总结。
 
-#### 阶段三：原生浏览器 DOM 控制器 (`browser_mcp` / `playwright`)
-- **思路**：引入 Playwright（可选使用 MCP 协议的 browser-use）。
-- **目标**：完全替代纯视觉点击。模型能通过 `browser_navigate`、`browser_get_content(selector)` 获取清洗过标签的 DOM 结构，然后下达精确的 `browser_click(selector)` 命令，彻底打通网页处理闭环。
+#### 阶段三：原生浏览器 DOM 控制器 (`browser_mcp` / `playwright`) ✅ 已完成
+- **实现方案**：已在 `plugins/browser.py` 实现。通过 `agent-browser` 命令行工具实现了对 Chrome 的精准 DOM 操控。
+
+### 7. 多功能文件上传与会话自动续接 ✅ 已完成
+- **实现状态**：已完成
+- **核心逻辑**：
+  - **万能上传 (`/upload`)**：支持图片识别（代理路由）与文本文件（代码/MD）直接读取。
+  - **视觉代理 (Vision Proxy)**：当主模型眼盲时，自动调用视觉模型生成“看图作文”并回馈给主中枢，保留其 Tool 能力。
+  - **会话持久化 (Session Resume)**：系统启动时自动加载 `data/sessions/` 中修改时间 (mtime) 最晚的历史记录，实现无缝断点续传。支持 `/new` 命令强制开启新会话。
+  - **Token 估算**：修正了对列表型消息内容的 Token 统计逻辑。
+
+### 8. 系统核心架构准则与技术细节 (Core Architecture Principles) [核心文档]
+为防止遗忘，我们将最近确立的关键技术方案沉淀如下：
+
+#### A. 浏览器调度策略 (Browser Orchestration)
+- **Edge 优先原则**：在 Windows 环境下，`ensure_browser_running` 会按照 `Edge (64位原生 -> x86) -> Chrome` 的顺序探测路径，并优先拉起 Microsoft Edge。
+- **三层运行模式**：
+  - `background` (默认)：无头模式，静默运行。
+  - `headed`：显示独立 Chromium 窗口。
+  - `system`：自动连接到系统的真实 Edge/Chrome 调试端口，允许 AI 操作用户已登录的网页。
+- **进程隔离**：使用独立的 `--user-data-dir="D:\browser_debug"`，避免与用户日常开启的浏览器进程产生锁冲突。
+
+#### B. 多模态代理路由 (Vision Proxy Routing)
+- **“眼盲”补偿**：当主模型（如 Qwen3.5）无法直接处理图片时，系统会自动判断并将图片路由给 `image_analyzer` 专用视觉模型（如 Qwen-VL）。
+- **结构化回馈**：视觉模型生成的详细描述会以 `【视觉代理反馈】` 前缀注入主模型的上下文，主模型基于文字描述执行后续 Tool 调用。
+
+#### C. 会话与状态管理 (Session & State)
+- **加载策略**：`SessionManager` 初始化时会扫描 `data/sessions/` 目录，通过比对文件修改时间戳自动锁定最后一次对话。
+- **强制重置**：指令集中的 `/new` 关键词会清空 `_current` 对象并生成新 UUID，用户可在任何时候获得纯净上下文。
+
+#### D. 安全与稳定性 (Safety & Stability)
+- **子进程脱离**：调用 `subprocess.Popen` 时使用 `DETACHED_PROCESS` 标志，确保浏览器启动不阻塞主控制台，且在 Python 崩溃时浏览器仍能作为 Daemon 保持存活。
+- **技能自举隔离**：`skill_creator` 编写的所有代码都会保存到 `plugins/` 独立文件，通过 `SkillManager` 动态 `importlib` 热加载，不污染核心代码库。
+
+### 9. 3D Interaction System (Project N.E.K.O Reference) [New]
+
+Implement interactive 3D companion features using Three.js and VRM.
+
+#### [NEW] [vrm-interaction.js](file:///d:/qwen_autogui/static/js/vrm-interaction.js)
+- **Camera/Input**: Handle orbit controls, scrolling zoom, and model repositioning.
+- **Raycasting**: Implement precision hit-testing to detect which part of the model is interacted with.
+- **Poke detection**: Distinguish between "drag" and "click". A click (short duration, no move) triggers a "poke".
+
+#### [NEW] [vrm-expression.js](file:///d:/qwen_autogui/static/js/vrm-expression.js)
+- **Expression Management**: Map high-level emotions (Happy, Angry) to VRM blendshapes.
+- **Auto-Blink & Mood Recovery**: Handle physiological blinking and automatic return to `neutral` state after an interactive reaction.
+
+#### [MODIFY] [app.js](file:///d:/qwen_autogui/static/js/app.js)
+- **Event Linkage**: 
+  - On Poke: 
+    1.  Call `vrmExpression.setMood('happy')`.
+    2.  Inject a system-level query into the chat stream: `*你轻轻地戳了戳[角色名]*`.
+  - The AI will then generate a contextual verbal response ("Hey! Stop that~") which triggers TTS and LipSync.
+
+---
 
 ## Verification Plan
-### Automated Tests
+
+### Automated Tests ✅ 已完成
 1. 运行 `python main.py`，触发 `/persona` 切换命令，确保不同人设的热切换可以生效。
 2. 运行 `python force_evolve.py <date>`，测试后台总结时 Token 模型的分流是否生效，并检查是否正常更新了 `user_profile` 和日记。
 3. 在控制台要求大模型“帮我执行一下 `python --version` 命令”，验证 `execute_command` 的挂载和输出拦截。
@@ -117,7 +158,10 @@
 6. **[新]** 让 AI 创建一个 3 步骤的计划并观察其严格按照计划顺序执行。
 
 ### Manual Verification
-1. 观察对话时的 Token 消耗面板，验证动态 Prompt 的精简效果。
-2. 在对话中说出新的用户事实（如“我最喜欢的颜色是蓝色”），执行进化后，检查 `USER_PROFILE.md` 是否成功增加了该条目，且未干扰普通事件记忆。
-3. 测试 AI 编写一个最简单的打印 "Hello World" 的新插件，观察热加载是否能无缝吸纳新技能。
-4. **[新]** 挂载 Playwright 后，让浏览器自动打开一个网页并精确抓取某个特定 DIV 里的内容文本。
+1. **3D Loading**: Ensure the VRM model renders correctly in the new frontend.
+2. **Orbit/Zoom**: Test manual camera controls and scrolling.
+3. **Poke Reaction**: 
+   - Click the model.
+   - **Expectation**: Model changes to a "Happy" or "Surprised" expression.
+   - **Expectation**: A chat message appears and voice output is triggered with LipSync.
+4. **Voice Integration**: Click the mic, speak, and observe the AI's response and model animation.

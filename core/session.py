@@ -46,7 +46,7 @@ class Session:
             })
         result += [
             {"role": m["role"], "content": m["content"]}
-            for m in self.messages[-max_messages:] if m["role"] != "visual_log"
+            for m in self.messages[-max_messages:] if m["role"] not in ("visual_log", "debug_log")
         ]
         return result
 
@@ -54,10 +54,27 @@ class Session:
         """
         Rough token estimate: ~1 token per 3 characters (works for both CJK and Latin).
         Includes the rolling summary and visual_log messages in the estimate.
+        For image payloads, estimate ~1000 tokens per image.
         """
-        total_chars = sum(len(m.get("content", "")) for m in self.messages)  # includes visual_log
-        total_chars += len(self.summary)
-        return total_chars // 3
+        total_chars = len(self.summary)
+        total_image_tokens = 0
+        
+        for m in self.messages:
+            if m.get("role") == "debug_log":
+                continue
+                
+            content = m.get("content", "")
+            if isinstance(content, str):
+                total_chars += len(content)
+            elif isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get("type") == "text":
+                            total_chars += len(item.get("text", ""))
+                        elif item.get("type") == "image_url":
+                            total_image_tokens += 1000
+                            
+        return (total_chars // 3) + total_image_tokens
 
     def prune_oldest(self, keep_last: int) -> List[Dict[str, Any]]:
         """
@@ -117,7 +134,27 @@ class SessionManager:
     def __init__(self, data_dir: str = "data"):
         self.sessions_dir = Path(data_dir) / "sessions"
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
-        self._current: Session = Session()
+        
+        # Auto-resume: Find the most recently modified session file
+        latest_session_id = None
+        latest_mtime = 0
+        
+        for path in self.sessions_dir.glob("*.json"):
+            try:
+                mtime = path.stat().st_mtime
+                if mtime > latest_mtime:
+                    latest_mtime = mtime
+                    latest_session_id = path.stem
+            except Exception:
+                continue
+                
+        if latest_session_id:
+            # Attempt to load the last session
+            self._current = Session() # Placeholder
+            if not self.load(latest_session_id):
+                self._current = Session()
+        else:
+            self._current = Session()
 
     @property
     def current(self) -> Session:

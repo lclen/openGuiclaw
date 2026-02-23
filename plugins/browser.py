@@ -6,14 +6,24 @@ Integration with the `agent-browser` CLI for precise DOM-based web automation.
 
 import subprocess
 
+# 全局记录当前浏览器的运行模式
+# 可选值: "background" (默认无头后台), "headed" (可见的Playwright), "system" (连接到系统的 Edge/Chrome)
+_CURRENT_MODE = "system"
+
 def register(skills_manager):
-    def run_agent_browser(args: list[str], headed: bool = False) -> str:
-        """Helper to run agent-browser via npx, defaulting to auto-connect to existing Chrome CDP."""
-        # Always attempt to auto-connect to the user's active Chrome via CDP
-        final_args = ["--auto-connect"]
+    def run_agent_browser(args: list[str]) -> str:
+        """Helper to run agent-browser via npx, applying the correct mode flags."""
+        global _CURRENT_MODE
+        final_args = []
+        
+        if _CURRENT_MODE == "system":
+            final_args.append("--auto-connect")
+            from core.browser_utils import ensure_browser_running
+            ensure_browser_running(9222)
+        elif _CURRENT_MODE == "headed":
+            final_args.append("--headed")
+
         final_args.extend(args)
-        from core.browser_utils import ensure_browser_running
-        ensure_browser_running(9222)
 
         # Use subprocess.list2cmdline to safely format the command for shell=True on Windows
         cmd_str = f"npx agent-browser {subprocess.list2cmdline(final_args)}"
@@ -27,8 +37,6 @@ def register(skills_manager):
                 errors="replace",
                 timeout=60
             )
-            # agent-browser might print hints to stderr, but we mainly care about stdout
-            # If the exit code is non-zero, it usually signifies an error.
             if result.returncode != 0:
                 err = result.stderr.strip() or result.stdout.strip()
                 return f"❌ Browser Error (code {result.returncode}):\n{err}"
@@ -43,25 +51,30 @@ def register(skills_manager):
 
     @skills_manager.skill(
         name="browser_open",
-        description="【网页专用】自动打开浏览器并进入指定的 URL。默认是无头模式（不显示界面）。如果你需要让用户亲眼看到浏览器窗口（用于演示或调试），请将 headed 设为 True。",
+        description="【网页专用】自动打开浏览器并进入指定的 URL。默认是 background 无头后台模式（静默运行不打扰用户）。如果你需要展示给用户看，请将 mode 设为 'headed'（可见的独立浏览器）或 'system'（强行拉起并接管系统的 Edge 或 Chrome，默认优先使用 Edge）。",
         parameters={
             "properties": {
                 "url": {
                     "type": "string",
                     "description": "要打开的网页地址"
                 },
-                "headed": {
-                    "type": "boolean",
-                    "description": "是否开启有头模式（显示浏览器界面）。默认为 False。",
-                    "default": False
+                "mode": {
+                    "type": "string",
+                    "description": "运行模式。\n- 'background': (默认) 完全后台无界面静皮运行，适合绝大部分不用给用户看的数据扒取和操作。\n- 'headed': 弹出一个可见的独立浏览器窗口。\n- 'system': 强行打开/连接用户电脑上的真实浏览器（优先寻找 Microsoft Edge，若无则使用 Google Chrome）。",
+                    "enum": ["background", "headed", "system"],
+                    "default": "background"
                 }
             },
             "required": ["url"]
         },
         category="browser"
     )
-    def browser_open(url: str, headed: bool = False) -> str:
-        return run_agent_browser(["open", url], headed=headed)
+    def browser_open(url: str, mode: str = "background") -> str:
+        global _CURRENT_MODE
+        if mode in ["background", "headed", "system"]:
+            _CURRENT_MODE = mode
+        return run_agent_browser(["open", url])
+
 
     @skills_manager.skill(
         name="browser_get_snapshot",

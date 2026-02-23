@@ -46,3 +46,37 @@
 {"subject": "Qwen 3.5", "relation": "涉及", "object": "摩尔线程适配", "source": "journal:2026-02-19", "ts": "2026-02-20 14:11:17"}
 {"subject": "OpenKita", "relation": "涉及", "object": "向量记忆", "source": "journal:2026-02-19", "ts": "2026-02-20 14:11:17"}
 {"subject": "OpenKita", "relation": "涉及", "object": "插件系统", "source": "journal:2026-02-19", "ts": "2026-02-20 14:11:17"}
+{"subject": "用户", "relation": "编辑", "object": "框架流程.md", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "编辑", "object": "mcp_servers.json", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "配置", "object": "MCP 服务", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "使用", "object": "AI 助手", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "编辑", "object": "Implementation Plan", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "使用", "object": "Open Agent Manager", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "使用", "object": "Bing 搜索引擎", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "启动", "object": "Edge 浏览器", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "运行", "object": "browser.py", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "运行", "object": "main.py", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "调试", "object": "qwen_autogui", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "观看", "object": "《凶宅笔记》第九回", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "访问", "object": "与山 0v0 动态页", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "访问", "object": "阿怪 MrWeird 视频页", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "小助", "relation": "记录", "object": "qwen_autogui", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "查询", "object": "LangChain 版本", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "开发", "object": "qwen_autogui", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "qwen_autogui", "relation": "使用后端框架", "object": "FastAPI", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "用户", "relation": "使用工具", "object": "VSCode", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "用户", "relation": "查阅仓库", "object": "Project-N-E-K-O/N.E.K.O", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "用户", "relation": "查阅仓库", "object": "lobehub", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "用户", "relation": "集成模型", "object": "VRoid", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "用户", "relation": "访问 UP 主", "object": "与山 0v0", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "用户", "relation": "访问 UP 主", "object": "阿怪 MrWeird", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "用户", "relation": "保存文件", "object": "C:\\Users\\Lclen\\AI 新闻汇总_20260220.md", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI", "relation": "具备技能", "object": "remember", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI", "relation": "具备技能", "object": "search_memory", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI", "relation": "具备技能", "object": "create_plan", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI", "relation": "具备技能", "object": "execute_command", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI", "relation": "使用外挂技能", "object": "autogui", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI", "relation": "打开网页", "object": "哔哩哔哩", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI", "relation": "查询天气", "object": "南京", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI 新闻汇总", "relation": "涵盖内容", "object": "Gemini 3.1 Pro 发布", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI 新闻汇总", "relation": "涵盖内容", "object": "Nvidia 与 OpenAI 投资协议", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}

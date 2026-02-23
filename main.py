@@ -13,6 +13,7 @@ import os
 # Ensure project root is on Python path
 sys.path.insert(0, os.path.dirname(__file__))
 
+from pathlib import Path
 from core.agent import Agent
 from core.context import ContextManager, MODE_SILENT, MODE_NORMAL, MODE_LIVELY
 from core.plugin_manager import PluginManager
@@ -28,18 +29,21 @@ BANNER = """
 """
 
 HELP_TEXT = """
-【内置命令】
-  /new              开启新对话（当前对话已保存）
-  /switch [id]      切换到指定的历史会话
-  /sessions         列出历史会话
-  /memory           查看所有记忆条目
-  /skills           查看已加载的技能
-  /plugins          查看已加载的插件
-  /plugins reload   重载所有插件
-  /plugins reload [name]  重载指定插件
-  /mode             切换主动密度模式（静默/正常/活泼）
+【Qwen AutoGUI System 控制台帮助】
+常用指令:
+  /help       - 显示此帮助信息
+  /quit       - 退出程序并保存会话
+  /new        - 开启一个全新的闲聊会话
+  /sessions   - 列出所有历史会话
+  /switch <id>- 切换到指定的历史会话
+  /memory     - 查看系统当前提取的所有长短期记忆节点
+  /skills     - 列出系统目前挂载的所有外挂工具技能
+  /plugins [reload] [name] - 列出/重载插件系统
+  /mode       - 切换系统视觉感知的回复干预度 (静默/正常/活泼)
+  /upload <路径> [提示词] - 上传本地文件给AI（支持图片或纯文本）
   /plan             切换计划执行模式（自驾/确认/普通）
   /context          查看视觉感知状态
+  /config           配置主动回复感知参数 (interval/cooldown/verbose)
   /persona          列出所有可用性格 (Identities)
   /persona <name>   切换主动 AI 性格
   /quit  /exit      退出
@@ -107,6 +111,9 @@ def main():
     loaded = plugin_mgr.load_all()
     if not loaded:
         print("  （plugins/ 目录没有插件）")
+        
+    # Start background threads AFTER all plugins and their modules are fully loaded
+    agent.start_background_tasks()
 
     # Initialize and Start Vision Context
     vision_cfg = agent.config.get("vision", {})
@@ -256,20 +263,108 @@ def main():
             else:
                 print("  已取消。\n")
             continue
+        elif cmd.startswith("/upload"):
+            import shlex
+            # Use shlex with posix=False to preserve Windows backslashes
+            # It keeps the quotes, so we strip them afterwards
+            parts = shlex.split(user_input, posix=False)
+            if len(parts) < 2:
+                print("  ❌ 请提供文件绝对路径，例如：/upload D:\\photo.jpg [提示词]\n")
+                continue
+                
+            file_path = parts[1].strip(' "\'')
+            prompt = parts[2].strip(' "\'') if len(parts) > 2 else "阅读这份文件/图片。"
+            
+            p = Path(file_path).expanduser().resolve()
+            if not p.exists():
+                print(f"  ❌ 找不到文件: {file_path}\n")
+                continue
+            
+            print(f"  ⏳ 正在读取文件: {p.name} ...")
+            try:
+                ext = p.suffix.lower()
+                image_exts = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'}
+                
+                # Image Route (Base64 Multimodal Payload)
+                if ext in image_exts:
+                    import base64
+                    with open(p, "rb") as f:
+                        base64_data = base64.b64encode(f.read()).decode('utf-8')
+                        mime_type = "image/jpeg"
+                        if ext == '.png': mime_type = "image/png"
+                        elif ext == '.webp': mime_type = "image/webp"
+                        elif ext == '.gif': mime_type = "image/gif"
+                        
+                    payload = [
+                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_data}"}},
+                        {"type": "text", "text": prompt}
+                    ]
+                    print(f"  🖼️ 已成功加载图片 [{int(p.stat().st_size / 1024)} KB]，切换至视觉感知链路。")
+                    user_input = payload  # Override user_input as a list!
+                    
+                # Text/Document Route
+                else:
+                    text_content = p.read_text(encoding='utf-8')
+                    # Trim blindly huge files to avoid blowing up context entirely
+                    if len(text_content) > 50000:
+                        text_content = text_content[:50000] + "\n...(由于内容过长已截断)...\n"
+                    
+                    user_input = f"[文件名称: {p.name}]\n[文件内容]\n```\n{text_content}\n```\n\n[用户提示]\n{prompt}"
+                    print(f"  📄 已成功读取文件 [{len(text_content)} 字符]，作为普通文本上下文追加。")
+
+            except Exception as e:
+                print(f"  ❌ 读取文件失败: {e}\n")
+                continue
+                
+            # DO NOT continue here, allow it to fall through to agent.chat(user_input) below!
         elif cmd == "/context":
             names = {MODE_SILENT: "🤐 静默", MODE_NORMAL: "😐 正常", MODE_LIVELY: "🤩 活泼"}
             print(f"\n【视觉感知状态】")
             print(f"  模式：{names.get(context.mode, context.mode)}")
-            print(f"  截屏间隔：{context.interval // 60} 分钟")
+            print(f"  截屏间隔：{context.interval} 秒 ({context.interval // 60} 分钟)")
             print(f"  冷却时间：{context.cooldown_minutes} 分钟")
             print(f"  最近感知状态：{context._last_status}")
-            print(f"  终端日志：{'✅ 开启' if context.verbose else '❌ 关闭'}  （输入 /context verbose 切换）")
+            print(f"  终端日志：{'✅ 开启' if context.verbose else '❌ 关闭'}  （输入 /config verbose 切换）")
             print()
             continue
-        elif cmd == "/context verbose":
-            context.verbose = not context.verbose
-            state = "✅ 已开启" if context.verbose else "❌ 已关闭"
-            print(f"  截屏日志 {state}。\n")
+        elif cmd.startswith("/config"):
+            parts = user_input.split()
+            if len(parts) < 2:
+                print("  用法：")
+                print("  /config interval <秒>   - 截屏检测频率")
+                print("  /config cooldown <分>   - 主动发话冷却时间")
+                print("  /config verbose         - 切换终端截屏日志显示\n")
+                continue
+            
+            subcmd = parts[1].lower()
+            
+            if "proactive" not in agent.config:
+                agent.config["proactive"] = {}
+                
+            try:
+                if subcmd == "interval" and len(parts) >= 3:
+                    sec = int(parts[2])
+                    agent.config["proactive"]["interval_seconds"] = sec
+                    context.interval = sec
+                    print(f"  ✅ 截屏间隔已修改为 {sec} 秒。\n")
+                elif subcmd == "cooldown" and len(parts) >= 3:
+                    mins = int(parts[2])
+                    agent.config["proactive"]["cooldown_minutes"] = mins
+                    context.cooldown_minutes = mins
+                    print(f"  ✅ 冷却时间已修改为 {mins} 分钟。\n")
+                elif subcmd == "verbose":
+                    context.verbose = not context.verbose
+                    agent.config["proactive"]["verbose"] = context.verbose
+                    state = "✅ 已开启" if context.verbose else "❌ 已关闭"
+                    print(f"  终端截屏日志 {state}。\n")
+                else:
+                    print("  ❌ 格式错误。例如: /config interval 60\n")
+                
+                with open("config.json", "w", encoding="utf-8") as f:
+                    import json
+                    json.dump(agent.config, f, indent=4, ensure_ascii=False)
+            except ValueError:
+                print("  ❌ 请提供有效的数字参数。\n")
             continue
         elif cmd.startswith("/persona"):
             parts = user_input.split(maxsplit=1)
