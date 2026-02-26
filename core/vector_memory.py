@@ -70,17 +70,21 @@ class EmbeddingClient:
         return vectors[0] if vectors else None
 
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        """Embed a list of texts (handles API calls)."""
+        """Embed a list of texts in batches of 10 to avoid API limits (Dashscope max is 10)."""
         if not texts: return []
+        batch_size = 10
+        all_embeddings = []
         try:
-            # DashScope supports batching
-            resp = self.client.embeddings.create(
-                model=self.model,
-                input=texts,
-                encoding_format="float",
-            )
-            sorted_data = sorted(resp.data, key=lambda x: x.index)
-            return [d.embedding for d in sorted_data]
+            for i in range(0, len(texts), batch_size):
+                batch_texts = texts[i:i + batch_size]
+                resp = self.client.embeddings.create(
+                    model=self.model,
+                    input=batch_texts,
+                    encoding_format="float",
+                )
+                sorted_data = sorted(resp.data, key=lambda x: x.index)
+                all_embeddings.extend([d.embedding for d in sorted_data])
+            return all_embeddings
         except Exception as e:
             print(f"[VectorMemory] API Error: {e}")
             return []

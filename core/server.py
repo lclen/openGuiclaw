@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 
@@ -139,6 +140,53 @@ async def lifespan(app: FastAPI):
         app_state["context_manager"] = context_manager
         app_state["plugin_manager"] = plugin_manager
         app_state["event_loop"] = asyncio.get_event_loop()
+
+        # 5. Init Task Scheduler
+        from core.scheduler import TaskScheduler, ScheduledTask
+
+        async def _scheduled_task_runner(task: ScheduledTask) -> tuple[bool, str]:
+            ag = app_state.get("agent")
+            if not ag:
+                return False, "Agent not ready"
+            
+            try:
+                loop = asyncio.get_running_loop()
+                _ctx_event_queue.put({
+                    "type": "chat_event",
+                    "role": "system",
+                    "content": f"⏰ [计划任务触发] {task.name}"
+                })
+                
+                if task.task_type.value == "reminder":
+                    _ctx_event_queue.put({
+                        "type": "chat_event",
+                        "role": "assistant",
+                        "content": task.reminder_message or "无提醒内容"
+                    })
+                    return True, "Reminder sent"
+                else:
+                    _ctx_event_queue.put({
+                        "type": "chat_event",
+                        "role": "user",
+                        "content": task.prompt
+                    })
+                    response = await loop.run_in_executor(None, ag.chat, task.prompt)
+                    _ctx_event_queue.put({
+                        "type": "chat_event",
+                        "role": "assistant",
+                        "content": response
+                    })
+                    return True, response
+            except Exception as e:
+                logger.error(f"Scheduled task error: {e}")
+                return False, str(e)
+
+        task_scheduler = TaskScheduler(
+            storage_path=Path("data/scheduler"),
+            executor=_scheduled_task_runner
+        )
+        await task_scheduler.start()
+        app_state["task_scheduler"] = task_scheduler
         
         logger.info("OpenAkita Server initialized successfully.")
         
@@ -153,6 +201,8 @@ async def lifespan(app: FastAPI):
         logger.info("Shutting down OpenAkita Server...")
         if "context_manager" in app_state:
             app_state["context_manager"].stop()
+        if "task_scheduler" in app_state:
+            await app_state["task_scheduler"].stop()
 
 # Create FastAPI app
 app = FastAPI(
@@ -173,7 +223,9 @@ app.add_middleware(
 # Mount static files and templates
 os.makedirs("static", exist_ok=True)
 os.makedirs("templates", exist_ok=True)
+os.makedirs("data/screenshots", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/screenshots", StaticFiles(directory="data/screenshots"), name="screenshots")
 templates = Jinja2Templates(directory="templates")
 
 # ─── UI Routes ────────────────────────────────────────────────────────────────
@@ -210,7 +262,8 @@ async def update_config(request: Request):
 
         # Schema validation: must be a dict and contain known top-level keys only
         _ALLOWED_KEYS = {"proactive", "browser_choice", "model", "api_key", "base_url",
-                         "persona", "memory", "skills", "plugins", "journal", "knowledge_graph"}
+                         "persona", "memory", "skills", "plugins", "journal", "knowledge_graph",
+                         "api", "vision", "image_analyzer", "embedding", "autogui", "screen", "agent"}
         if not isinstance(new_config, dict):
             raise HTTPException(status_code=400, detail="Config must be a JSON object")
         unknown_keys = set(new_config.keys()) - _ALLOWED_KEYS
@@ -277,10 +330,118 @@ async def get_status():
         "status": "online",
         "vision_enabled": getattr(ctx, "_enabled", False) if ctx else False,
         "vision_mode": getattr(ctx, "mode", "unknown") if ctx else "unknown",
-        "active_persona": getattr(agent, "active_persona_name", "unknown"),
-        "last_context_status": getattr(ctx, "_last_status", "unknown") if ctx else "unknown",
-        "last_context_summary": getattr(ctx, "_last_summary", "") if ctx else ""
+            "last_context_summary": getattr(ctx, "_last_summary", "") if ctx else ""
     }
+
+@app.post("/api/skills/config")
+async def save_skill_config(request: Request):
+    """Save configuration for a specific skill."""
+    data = await request.json()
+    skill_name = data.get("name")
+    config_values = data.get("config_values", {})
+    
+    agent = app_state.get("agent")
+    if not agent:
+        raise HTTPException(status_code=500, detail="Agent not ready")
+        
+    try:
+        agent.skills.update_config(skill_name, config_values)
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Error saving skill config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ─── Scheduler Routes ────────────────────────────────────────────────────────
+
+from core.scheduler import ScheduledTask, TriggerType, TaskType
+
+@app.get("/api/scheduler/tasks")
+async def list_tasks():
+    scheduler = app_state.get("task_scheduler")
+    if not scheduler:
+        return {"tasks": []}
+    
+    tasks = scheduler.list_tasks()
+    return {"tasks": [t.to_dict() for t in tasks]}
+
+@app.post("/api/scheduler/tasks")
+async def create_task(req: Request):
+    scheduler = app_state.get("task_scheduler")
+    if not scheduler:
+        raise HTTPException(status_code=500, detail="Scheduler not ready")
+    
+    data = await req.json()
+    try:
+        task = ScheduledTask.create(
+            name=data["name"],
+            description=data.get("description", ""),
+            trigger_type=TriggerType(data["trigger_type"]),
+            trigger_config=data["trigger_config"],
+            prompt=data.get("prompt", ""),
+            task_type=TaskType(data.get("task_type", "task")),
+            reminder_message=data.get("reminder_message"),
+            action=data.get("action")
+        )
+        if not data.get("enabled", True):
+            task.disable()
+            
+        await scheduler.add_task(task)
+        return {"status": "success", "task_id": task.id}
+    except Exception as e:
+        logger.error(f"Error creating task: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.put("/api/scheduler/tasks/{task_id}")
+async def update_task(task_id: str, req: Request):
+    scheduler = app_state.get("task_scheduler")
+    if not scheduler:
+        raise HTTPException(status_code=500, detail="Scheduler not ready")
+        
+    data = await req.json()
+    success = await scheduler.update_task(task_id, data)
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"status": "success"}
+
+@app.delete("/api/scheduler/tasks/{task_id}")
+async def delete_task(task_id: str):
+    scheduler = app_state.get("task_scheduler")
+    if not scheduler:
+        raise HTTPException(status_code=500, detail="Scheduler not ready")
+        
+    success = await scheduler.remove_task(task_id, force=True)
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"status": "success"}
+
+@app.post("/api/scheduler/tasks/{task_id}/toggle")
+async def toggle_task(task_id: str, req: Request):
+    scheduler = app_state.get("task_scheduler")
+    if not scheduler:
+        raise HTTPException(status_code=500, detail="Scheduler not ready")
+        
+    data = await req.json()
+    enabled = data.get("enabled", True)
+    
+    if enabled:
+        success = await scheduler.enable_task(task_id)
+    else:
+        success = await scheduler.disable_task(task_id)
+        
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"status": "success"}
+
+@app.post("/api/scheduler/tasks/{task_id}/trigger")
+async def trigger_task(task_id: str):
+    scheduler = app_state.get("task_scheduler")
+    if not scheduler:
+        raise HTTPException(status_code=500, detail="Scheduler not ready")
+        
+    success = await scheduler.trigger_now(task_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"status": "success"}
 
 @app.post("/api/chat/sync")
 async def chat_sync(request: ChatRequest):
@@ -388,7 +549,12 @@ async def list_sessions():
                 data = json.load(f)
             messages = data.get("messages", [])
             title = next(
-                (m["content"][:40] for m in messages if m.get("role") == "user" and isinstance(m.get("content"), str)),
+                (
+                    (m["content"] if isinstance(m["content"], str) else
+                     " ".join(p.get("text","") for p in m["content"] if isinstance(p,dict) and p.get("type")=="text"))[:40]
+                    for m in messages
+                    if m.get("role") == "user" and m.get("content")
+                ),
                 "(\u7a7a\u5bf9\u8bdd)"
             )
             result.append({
@@ -505,8 +671,8 @@ async def get_preferences():
     if os.path.exists(_PREFS_FILE):
         with open(_PREFS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    # 返回空列表，让前端使用默认值
-    return []
+    # 返回空对象，让前端使用默认值
+    return {}
 
 @app.post("/api/config/preferences")
 async def save_preferences(request: Request):
@@ -633,5 +799,93 @@ async def download_store_item(req: StoreDownloadRequest, background_tasks: Backg
     # Return immediately while download happens in background
     background_tasks.add_task(_download_task)
     return {"status": "started", "message": f"Downloading {req.name} in background..."}
+
+# ─── Skills Management API ────────────────────────────────────────────────────
+@app.get("/api/skills/list")
+async def list_skills():
+    """Get list of all registered skills with their status."""
+    agent = app_state.get("agent")
+    if not agent:
+        raise HTTPException(status_code=500, detail="Agent not initialized")
+    
+    skills_data = []
+    for skill in agent.skills._registry.values():
+        skills_data.append({
+            "name": skill.name,
+            "description": skill.description,
+            "category": skill.category,
+            "enabled": skill.enabled,
+            "parameters": skill.parameters,
+            "ui_config": skill.ui_config,
+            "config_values": skill.config_values
+        })
+    
+    return {"skills": skills_data}
+
+class SkillToggleRequest(BaseModel):
+    name: str
+    enabled: bool
+
+class SkillConfigRequest(BaseModel):
+    name: str
+    config: Dict[str, Any]
+
+@app.post("/api/skills/config")
+async def config_skill(request: SkillConfigRequest):
+    """Update a skill's configuration values."""
+    agent = app_state.get("agent")
+    if not agent:
+        raise HTTPException(status_code=500, detail="Agent not initialized")
+    
+    skill = agent.skills.get(request.name)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Skill '{request.name}' not found")
+        
+    agent.skills.update_config(request.name, request.config)
+    return {"status": "success", "name": request.name, "config_values": skill.config_values}
+
+@app.post("/api/skills/toggle")
+async def toggle_skill(request: SkillToggleRequest):
+    """Enable or disable a skill."""
+    agent = app_state.get("agent")
+    if not agent:
+        raise HTTPException(status_code=500, detail="Agent not initialized")
+    
+    skill = agent.skills.get(request.name)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Skill '{request.name}' not found")
+    
+    if request.enabled:
+        agent.skills.enable(request.name)
+    else:
+        agent.skills.disable(request.name)
+    
+    return {"status": "success", "name": request.name, "enabled": request.enabled}
+
+@app.post("/api/skills/reload")
+async def reload_skills():
+    """Reload all skills."""
+    agent = app_state.get("agent")
+    if not agent:
+        raise HTTPException(status_code=500, detail="Agent not initialized")
+    
+    try:
+        # Reload skill modules
+        import importlib
+        from skills import basic, autogui, web_search
+        
+        importlib.reload(basic)
+        importlib.reload(autogui)
+        importlib.reload(web_search)
+        
+        # Re-register skills
+        agent.skills._registry.clear()
+        agent.register_skill_module(basic)
+        agent.register_skill_module(autogui)
+        agent.register_skill_module(web_search)
+        
+        return {"status": "success", "message": "Skills reloaded successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reload skills: {str(e)}")
 
 # To run: uvicorn core.server:app --host 127.0.0.1 --port 8000

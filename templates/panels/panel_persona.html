@@ -66,7 +66,7 @@
                     x-text="uploadingModel ? '上传中...' : '点击或拖拽 .vrm 文件'"></span>
             </div>
             <p x-show="uploadStatus" class="text-[10px] mt-1 text-center"
-                :class="uploadStatus.includes('成功') ? 'text-green-400' : 'text-red-400'"
+                :class="uploadStatus.startsWith('✓') ? 'text-green-400' : 'text-red-400'"
                 x-text="uploadStatus"></p>
         </div>
 

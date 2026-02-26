@@ -24,20 +24,20 @@
         commandSelectedIndex: 0,
         availableCommands: [
             // ── 会话管理 ──
-            { command: '/clear',         desc: '清空当前页面对话历史',               action: 'clear_chat',      icon: '✗' },
-            { command: '/new',           desc: '新建会话并保存当前历史',             action: 'new_session',     icon: '+' },
+            { command: '/clear', desc: '清空当前页面对话历史', action: 'clear_chat', icon: '✗' },
+            { command: '/new', desc: '新建会话并保存当前历史', action: 'new_session', icon: '+' },
             // ── 模型管理 ──
-            { command: '/upload',        desc: '上传本地文件（图片/文本）发给 AI 分析', action: 'upload_file',     icon: '↑' },
-            { command: '/save',          desc: '保存当前模型视角与位置配置',         action: 'save_vrm',        icon: '▣' },
+            { command: '/upload', desc: '上传本地文件（图片/文本）发给 AI 分析', action: 'upload_file', icon: '↑' },
+            { command: '/save', desc: '保存当前模型视角与位置配置', action: 'save_vrm', icon: '▣' },
             // ── AI 快捷任务 ──
-            { command: '/recall ',       desc: '搜索长期记忆，如: /recall 南京',     action: 'send_recall',     icon: '◐' },
-            { command: '/plan',          desc: '查看当前活跃任务计划状态',           action: 'send_plan',       icon: '▤' },
-            { command: '/weather ',      desc: '查询天气，如: /weather 上海',        action: 'send_weather',    icon: '◑' },
-            { command: '/remind ',       desc: '设置提醒，如: /remind 10分钟后喝水', action: 'send_remind',     icon: '◔' },
-            { command: '/screenshot',    desc: '截取屏幕并让 AI 分析当前画面',       action: 'send_screenshot', icon: '▨' },
+            { command: '/recall ', desc: '搜索长期记忆，如: /recall 南京', action: 'send_recall', icon: '◐' },
+            { command: '/plan', desc: '查看当前活跃任务计划状态', action: 'send_plan', icon: '▤' },
+            { command: '/weather ', desc: '查询天气，如: /weather 上海', action: 'send_weather', icon: '◑' },
+            { command: '/remind ', desc: '设置提醒，如: /remind 10分钟后喝水', action: 'send_remind', icon: '◔' },
+            { command: '/screenshot', desc: '截取屏幕并让 AI 分析当前画面', action: 'send_screenshot', icon: '▨' },
             // ── 系统维护 ──
-            { command: '/poke',          desc: '强制触发一次视觉感知',               action: 'poke_ai',         icon: '→' },
-            { command: '/sandbox clear', desc: '清理所有后台沙箱实例',               action: 'clear_sandbox',   icon: '⊘' },
+            { command: '/poke', desc: '强制触发一次视觉感知', action: 'poke_ai', icon: '→' },
+            { command: '/sandbox clear', desc: '清理所有后台沙箱实例', action: 'clear_sandbox', icon: '⊘' },
         ],
         filteredCommands: [],
 
@@ -61,6 +61,27 @@
             lively: { interval_minutes: 5, cooldown_minutes: 1 }
         },
 
+        // Scheduler
+        schedulerTasks: [],
+        showSchedulerForm: false,
+        schedulerFormData: {
+            id: null,
+            name: '',
+            description: '',
+            task_type: 'task',
+            prompt: '',
+            reminder_message: '',
+            trigger_type: 'once',
+            enabled: true,
+            trigger_config_onceTime: '',
+            trigger_config_intervalMinutes: 0,
+            trigger_config_intervalHours: 0,
+            trigger_config_cron: '0 9 * * *',
+            trigger_preset_time: '09:00',
+            trigger_preset_weekday: '1',
+            trigger_preset_day: '1'
+        },
+
         // Model Config Data
         vrmModels: [],
         vrmAnimations: [],
@@ -75,6 +96,12 @@
         selectedCategory: 'All',
         categories: ['All', 'Vroid', 'Official', 'Basic'],
 
+        // Skills state
+        skills: [],
+        skillSearchQuery: '',
+        skillCategoryFilter: 'all',
+        skillStatusFilter: 'all',
+
         async init() {
             await this.checkStatus();
             setInterval(() => this.checkStatus(), 15000);
@@ -85,6 +112,7 @@
             this.loadAnimations();
             this.loadCurrentSession();
             this.loadGlobalConfig();
+            this.loadSchedulerTasks();
         },
 
         async loadGlobalConfig() {
@@ -174,6 +202,9 @@
                         this.pushLog('system', ev.text || '');
                     } else if (ev.type === 'proactive' && ev.message) {
                         this.pushLog('system', `👀 视觉系统观察到屏幕新动态 (已禁用自动搭话)`);
+                    } else if (ev.type === 'chat_event') {
+                        // Real-time chat update from scheduler or other background tasks
+                        this.loadCurrentSession();
                     }
                 } catch { }
             };
@@ -208,6 +239,7 @@
             if (panel === 'history' && this.sessions.length === 0) this.loadSessions();
             if (panel === 'diary' && this.diaryDates.length === 0) this.loadDiaryDates();
             if (panel === 'persona' && Object.keys(this.personas).length === 0) this.loadPersona();
+            if (panel === 'skills' && this.skills.length === 0) this.loadSkills();
             if (panel === 'config' && this.vrmModels.length === 0) this.loadModels();
             if (panel === 'debug') {
                 this.$nextTick(() => {
@@ -1046,6 +1078,374 @@
                 const c = document.getElementById('chat-container');
                 if (c) c.scrollTop = c.scrollHeight;
             });
+        },
+
+        // ═══════════════ Scheduler Management ═══════════════
+        async loadSchedulerTasks() {
+            try {
+                const res = await fetch('/api/scheduler/tasks');
+                if (res.ok) {
+                    const data = await res.json();
+                    this.schedulerTasks = data.tasks || [];
+                }
+            } catch (e) {
+                console.error('Failed to load scheduler tasks', e);
+            }
+        },
+
+        openSchedulerForm() {
+            this.schedulerFormData = {
+                id: null,
+                name: '',
+                description: '',
+                task_type: 'task',
+                prompt: '',
+                reminder_message: '',
+                trigger_type: 'once',
+                enabled: true,
+                trigger_config_onceTime: '',
+                trigger_config_intervalMinutes: 0,
+                trigger_config_intervalHours: 0,
+                trigger_config_cron: '0 9 * * *',
+                trigger_preset_time: '09:00',
+                trigger_preset_weekday: '1',
+                trigger_preset_day: '1'
+            };
+
+            // Generate current time + 5 mins for onceTime default
+            const now = new Date();
+            now.setMinutes(now.getMinutes() + 5);
+            // Format to YYYY-MM-DDThh:mm string
+            const tzoffset = now.getTimezoneOffset() * 60000;
+            const localISOTime = (new Date(now - tzoffset)).toISOString().slice(0, 16);
+            this.schedulerFormData.trigger_config_onceTime = localISOTime;
+
+            this.showSchedulerForm = true;
+        },
+
+        closeSchedulerForm() {
+            this.showSchedulerForm = false;
+        },
+
+        editSchedulerTask(task) {
+            // copy task data to form
+            this.schedulerFormData = {
+                id: task.id,
+                name: task.name,
+                description: task.description || '',
+                task_type: task.task_type || 'task',
+                prompt: task.prompt || '',
+                reminder_message: task.reminder_message || '',
+                trigger_type: task.trigger_type,
+                enabled: task.enabled,
+                trigger_config_onceTime: '',
+                trigger_config_intervalMinutes: 0,
+                trigger_config_intervalHours: 0,
+                trigger_config_cron: '',
+                trigger_preset_time: '09:00',
+                trigger_preset_weekday: '1',
+                trigger_preset_day: '1'
+            };
+
+            if (task.trigger_type === 'once') {
+                if (task.trigger_config && (task.trigger_config.run_at || task.trigger_config.run_date)) {
+                    try {
+                        const d = new Date(task.trigger_config.run_at || task.trigger_config.run_date);
+                        // Convert UTC string to local ISOTime string
+                        const tzoffset = d.getTimezoneOffset() * 60000;
+                        this.schedulerFormData.trigger_config_onceTime = (new Date(d.getTime() - tzoffset)).toISOString().slice(0, 16);
+                    } catch (e) { }
+                }
+            } else if (task.trigger_type === 'interval') {
+                if (task.trigger_config) {
+                    const seconds = task.trigger_config.interval_seconds || task.trigger_config.seconds || 0;
+                    this.schedulerFormData.trigger_config_intervalHours = Math.floor(seconds / 3600);
+                    this.schedulerFormData.trigger_config_intervalMinutes = Math.floor((seconds % 3600) / 60);
+                }
+            } else if (task.trigger_type === 'cron') {
+                const cronExp = task.trigger_config ? (task.trigger_config.cron || task.trigger_config.expression) : '';
+                this.schedulerFormData.trigger_config_cron = cronExp;
+
+                // Try to detect presets from Cron
+                const parts = cronExp.split(/\s+/);
+                if (parts.length === 5) {
+                    const [m, h, d, mon, dow] = parts;
+                    const timeStr = `${h.padStart(2, '0')}:${m.padStart(2, '0')}`;
+
+                    if (d === '*' && mon === '*' && dow === '*') {
+                        this.schedulerFormData.trigger_type = 'daily';
+                        this.schedulerFormData.trigger_preset_time = timeStr;
+                    } else if (d === '*' && mon === '*' && dow !== '*') {
+                        this.schedulerFormData.trigger_type = 'weekly';
+                        this.schedulerFormData.trigger_preset_time = timeStr;
+                        this.schedulerFormData.trigger_preset_weekday = dow;
+                    } else if (d !== '*' && mon === '*' && dow === '*') {
+                        this.schedulerFormData.trigger_type = 'monthly';
+                        this.schedulerFormData.trigger_preset_time = timeStr;
+                        this.schedulerFormData.trigger_preset_day = d;
+                    }
+                }
+            }
+
+            this.showSchedulerForm = true;
+        },
+
+        async saveSchedulerTask() {
+            const formData = this.schedulerFormData;
+
+            // Validation
+            if (!formData.name.trim()) {
+                this.pushLog('error', '任务名称不能为空');
+                return;
+            }
+
+            if (formData.task_type === 'task' && !formData.prompt.trim()) {
+                this.pushLog('error', '给助手的 Prompt 指令不能为空');
+                return;
+            }
+            if (formData.task_type === 'reminder' && !formData.reminder_message.trim()) {
+                this.pushLog('error', '提醒文本内容不能为空');
+                return;
+            }
+
+            let triggerConfig = {};
+            let finalTriggerType = formData.trigger_type;
+
+            if (formData.trigger_type === 'once') {
+                if (!formData.trigger_config_onceTime) {
+                    this.pushLog('error', '执行时间不能为空');
+                    return;
+                }
+                const d = new Date(formData.trigger_config_onceTime);
+                triggerConfig = { run_at: d.toISOString() };
+            } else if (formData.trigger_type === 'interval') {
+                const totalSeconds = (formData.trigger_config_intervalHours * 3600) + (formData.trigger_config_intervalMinutes * 60);
+                if (totalSeconds <= 0) {
+                    this.pushLog('error', '时间间隔必须大于 0');
+                    return;
+                }
+                triggerConfig = { interval_seconds: totalSeconds };
+            } else if (['daily', 'weekly', 'monthly', 'cron'].includes(formData.trigger_type)) {
+                finalTriggerType = 'cron';
+                let cronStr = '';
+
+                if (formData.trigger_type === 'cron') {
+                    if (!formData.trigger_config_cron.trim()) {
+                        this.pushLog('error', 'Cron 规则不能为空');
+                        return;
+                    }
+                    cronStr = formData.trigger_config_cron.trim();
+                } else {
+                    // Presets
+                    const [h, m] = formData.trigger_preset_time.split(':').map(x => parseInt(x).toString());
+                    if (formData.trigger_type === 'daily') {
+                        cronStr = `${m} ${h} * * *`;
+                    } else if (formData.trigger_type === 'weekly') {
+                        cronStr = `${m} ${h} * * ${formData.trigger_preset_weekday}`;
+                    } else if (formData.trigger_type === 'monthly') {
+                        cronStr = `${m} ${h} ${formData.trigger_preset_day} * *`;
+                    }
+                }
+                triggerConfig = { cron: cronStr };
+            }
+
+            const payload = {
+                name: formData.name,
+                description: formData.description,
+                trigger_type: finalTriggerType,
+                trigger_config: triggerConfig,
+                task_type: formData.task_type,
+                prompt: formData.task_type === 'task' ? formData.prompt : '',
+                reminder_message: formData.task_type === 'reminder' ? formData.reminder_message : '',
+                enabled: formData.enabled
+            };
+
+            try {
+                let url = '/api/scheduler/tasks';
+                let method = 'POST';
+                if (formData.id) {
+                    url += `/${formData.id}`;
+                    method = 'PUT';
+                }
+
+                const res = await fetch(url, {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (res.ok) {
+                    this.pushLog('system', formData.id ? '成功更新计划任务' : '成功创建计划任务');
+                    this.closeSchedulerForm();
+                    await this.loadSchedulerTasks();
+                } else {
+                    const err = await res.json();
+                    this.pushLog('error', `保存计划任务失败: ${err.detail}`);
+                }
+            } catch (e) {
+                console.error(e);
+                this.pushLog('error', '网络错误，请查看控制台');
+            }
+        },
+
+        async deleteSchedulerTask(taskId) {
+            if (!confirm("确定要删除此计划任务吗？")) return;
+            try {
+                const res = await fetch(`/api/scheduler/tasks/${taskId}`, { method: 'DELETE' });
+                if (res.ok) {
+                    this.pushLog('system', '计划任务已删除');
+                    await this.loadSchedulerTasks();
+                } else {
+                    const err = await res.json();
+                    this.pushLog('error', `删除失败: ${err.detail}`);
+                }
+            } catch (e) { console.error(e); }
+        },
+
+        async toggleSchedulerTask(taskId, enabled) {
+            try {
+                const res = await fetch(`/api/scheduler/tasks/${taskId}/toggle`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: enabled })
+                });
+                if (res.ok) {
+                    this.pushLog('system', enabled ? '已启用任务' : '已停用任务');
+                    await this.loadSchedulerTasks();
+                } else {
+                    this.pushLog('error', '切换状态失败');
+                }
+            } catch (e) { console.error(e); }
+        },
+
+        async triggerSchedulerTask(taskId) {
+            try {
+                const res = await fetch(`/api/scheduler/tasks/${taskId}/trigger`, { method: 'POST' });
+                if (res.ok) {
+                    this.pushLog('system', '任务执行指令已发送');
+                    await this.loadSchedulerTasks();
+                } else {
+                    this.pushLog('error', '触发任务失败');
+                }
+            } catch (e) { console.error(e); }
+        },
+
+        // ═══════════════ Skills Management ═══════════════
+        async loadSkills() {
+            try {
+                console.log('[Skills] Loading skills...');
+                const response = await fetch('/api/skills/list');
+                console.log('[Skills] Response status:', response.status);
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('[Skills] Loaded skills:', data.skills);
+                    this.skills = (data.skills || []).map(skill => {
+                        return {
+                            ...skill,
+                            _showConfig: false,
+                            _saving: false,
+                            config_values: skill.config_values || {}
+                        };
+                    });
+                    console.log('[Skills] Skills array length:', this.skills.length);
+                } else {
+                    console.error('[Skills] Failed to load skills:', response.statusText);
+                }
+            } catch (error) {
+                console.error('[Skills] Error loading skills:', error);
+            }
+        },
+
+        async toggleSkill(name, enabled) {
+            try {
+                const response = await fetch('/api/skills/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, enabled })
+                });
+
+                if (response.ok) {
+                    const skill = this.skills.find(s => s.name === name);
+                    if (skill) {
+                        skill.enabled = enabled;
+                    }
+                    this.pushLog('success', `技能 ${name} 已${enabled ? '启用' : '禁用'}`);
+                } else {
+                    this.pushLog('error', `切换技能状态失败`);
+                    await this.loadSkills();
+                }
+            } catch (error) {
+                console.error('Failed to toggle skill:', error);
+                this.pushLog('error', `切换技能状态失败: ${error.message}`);
+            }
+        },
+
+        async saveSkillConfig(skill) {
+            skill._saving = true;
+            try {
+                const response = await fetch('/api/skills/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: skill.name, config: skill.config_values })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    this.pushLog('success', `技能配置 ${skill.name} 保存成功`);
+                    skill.config_values = data.config_values || skill.config_values;
+                } else {
+                    this.pushLog('error', `技能配置保存失败: ${data.detail || '未知错误'}`);
+                }
+            } catch (error) {
+                console.error('Failed to save skill config:', error);
+                this.pushLog('error', `配置保存异常: ${error.message}`);
+            } finally {
+                skill._saving = false;
+            }
+        },
+
+        async reloadSkills() {
+            try {
+                this.pushLog('status', '正在重新加载技能...');
+                const response = await fetch('/api/skills/reload', {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    await this.loadSkills();
+                    this.pushLog('success', '技能已重新加载');
+                } else {
+                    this.pushLog('error', '重新加载技能失败');
+                }
+            } catch (error) {
+                console.error('Failed to reload skills:', error);
+                this.pushLog('error', `重新加载技能失败: ${error.message}`);
+            }
+        },
+
+        get filteredSkills() {
+            let filtered = this.skills;
+
+            if (this.skillSearchQuery.trim()) {
+                const query = this.skillSearchQuery.toLowerCase();
+                filtered = filtered.filter(skill =>
+                    skill.name.toLowerCase().includes(query) ||
+                    skill.description.toLowerCase().includes(query)
+                );
+            }
+
+            if (this.skillCategoryFilter !== 'all') {
+                filtered = filtered.filter(skill =>
+                    skill.category === this.skillCategoryFilter
+                );
+            }
+
+            if (this.skillStatusFilter === 'enabled') {
+                filtered = filtered.filter(skill => skill.enabled);
+            } else if (this.skillStatusFilter === 'disabled') {
+                filtered = filtered.filter(skill => !skill.enabled);
+            }
+
+            return filtered;
         }
     };
 }

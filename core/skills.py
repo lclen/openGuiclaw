@@ -18,6 +18,9 @@ class SkillDefinition:
     handler: Callable
     enabled: bool = True
     category: str = "general"
+    ui_config: Optional[List[Dict[str, Any]]] = field(default_factory=list)
+    config_values: Dict[str, Any] = field(default_factory=dict)
+
 
 
 class SkillManager:
@@ -37,11 +40,44 @@ class SkillManager:
             return time.strftime("%Y-%m-%d %H:%M:%S")
     """
 
-    def __init__(self):
+    def __init__(self, config_path: str = "data/skills.json"):
         self._registry: Dict[str, SkillDefinition] = {}
+        self.config_path = config_path
+        self._config_data: Dict[str, Any] = {}
+        self._load_config()
+
+    def _load_config(self) -> None:
+        import os, json
+        if not os.path.exists(self.config_path):
+            self._config_data = {}
+            return
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                self._config_data = json.load(f)
+        except Exception as e:
+            print(f"[SkillManager] Failed to load config: {e}")
+            self._config_data = {}
+
+    def _save_config(self) -> None:
+        import os, json
+        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+        data = {}
+        for name, skill in self._registry.items():
+            data[name] = {
+                "enabled": skill.enabled,
+                "config_values": skill.config_values
+            }
+        try:
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            print(f"[SkillManager] Failed to save config: {e}")
 
     def register(self, skill: SkillDefinition) -> None:
         """Register a skill."""
+        if skill.name in self._config_data:
+            skill.enabled = self._config_data[skill.name].get("enabled", skill.enabled)
+            skill.config_values = self._config_data[skill.name].get("config_values", skill.config_values)
         self._registry[skill.name] = skill
 
     def skill(
@@ -51,6 +87,7 @@ class SkillManager:
         parameters: Dict[str, Any],
         category: str = "general",
         enabled: bool = True,
+        ui_config: Optional[List[Dict[str, Any]]] = None,
     ):
         """Decorator to register a function as a skill."""
         def decorator(func: Callable) -> Callable:
@@ -61,6 +98,7 @@ class SkillManager:
                 handler=func,
                 enabled=enabled,
                 category=category,
+                ui_config=ui_config or [],
             ))
             return func
         return decorator
@@ -68,10 +106,17 @@ class SkillManager:
     def enable(self, name: str) -> None:
         if name in self._registry:
             self._registry[name].enabled = True
+            self._save_config()
 
     def disable(self, name: str) -> None:
         if name in self._registry:
             self._registry[name].enabled = False
+            self._save_config()
+
+    def update_config(self, name: str, config: Dict[str, Any]) -> None:
+        if name in self._registry:
+            self._registry[name].config_values.update(config)
+            self._save_config()
 
     def get(self, name: str) -> Optional[SkillDefinition]:
         return self._registry.get(name)

@@ -7,9 +7,10 @@
     <div class="flex-1 overflow-y-auto custom-scrollbar py-2">
         <template x-for="s in sessions" :key="s.id">
             <button @click="loadSession(s.id)"
-                class="w-full text-left px-4 py-2.5 hover:bg-white/10 transition-colors border-b border-white/5">
+                :disabled="isReceiving"
+                class="w-full text-left px-4 py-2.5 hover:bg-white/10 transition-colors border-b border-white/5 disabled:opacity-40 disabled:cursor-not-allowed">
                 <p class="text-white/85 text-xs truncate" x-text="s.title"></p>
-                <p class="text-white/35 text-xs mt-0.5" x-text="`${s.message_count} 条消息`"></p>
+                <p class="text-white/35 text-xs mt-0.5" x-text="`${s.message_count} 条消息 · ${s.created_at ? s.created_at.slice(0,10) : ''}`"></p>
             </button>
         </template>
         <div x-show="sessions.length === 0" class="px-4 py-8 text-center text-white/30 text-sm">暂无历史对话</div>

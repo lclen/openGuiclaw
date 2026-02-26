@@ -19,6 +19,8 @@ from core.journal import JournalManager
 from core.diary import DiaryManager
 from core.self_evolution import SelfEvolution
 from core.vector_memory import EmbeddingClient, VectorStore
+from core.journal_index import JournalIndex
+from core.diary_index import DiaryIndex
 from core.knowledge_graph import KnowledgeGraph
 from core.user_profile import UserProfileManager
 import time
@@ -37,6 +39,10 @@ BUILTIN_SYSTEM_SUFFIX_BASE = """
 - **search_journal(query)**: 搜索过去的每日日志，回忆你以前做过什么。
 - **query_knowledge(entity)**: 查询知识图谱，获取实体（人/事/物）之间的关系。
 - **内置联网搜索**: 当你需要查询实时信息（天气、新闻、股价等），可以直接搜索，无需调用额外工具。
+
+# 交互选择规则 (Interactive Options) [极其重要]
+- 当你想让用户从几个选项中作决定，或主动展示选项让用户点击时，**禁止在聊天文本中手动打印 A/B/C/D 让用户选**（这将无法渲染按钮）。
+- **你必须且只能**调用 `ask_user` 工具，并将选项结构化地放入 `options` 参数中，从而在前端渲染出可点击的交互组件。
 """
 
 _DISCIPLINE_AUTOPILOT = """
@@ -200,6 +206,17 @@ class Agent:
         self.skills = SkillManager()
         self.journal = JournalManager(data_dir)
         self.diary = DiaryManager(data_dir)
+
+        # Semantic indexes for journal and diary (enabled only if embedding is available)
+        self.journal_index: Optional[JournalIndex] = None
+        self.diary_index: Optional[DiaryIndex] = None
+        if self._embedding_client:
+            self.journal_index = JournalIndex(self._embedding_client, data_dir)
+            self.diary_index = DiaryIndex(self._embedding_client, data_dir)
+            # Backfill: index any existing diary/journal files not yet vectorized
+            threading.Thread(
+                target=self._backfill_doc_indexes, daemon=True, name="DocIndexBackfill"
+            ).start()
         
         # New Feature: Knowledge Graph
         self.kg = KnowledgeGraph(data_dir)
@@ -213,6 +230,11 @@ class Agent:
             data_dir=data_dir,
             knowledge_graph=self.kg,
             user_profile=self.user_profile,
+            journal_index=self.journal_index,
+            diary_index=self.diary_index,
+        )
+        self.evolution._agentic_exploration_enabled = (
+            self.config.get("proactive", {}).get("agentic_exploration", False)
         )
         # Hack: sync diary manager if needed, or let evolution use its own if designed that way.
         # Since they manipulate files, it's safe to have two instances pointing to same dir.
@@ -383,6 +405,42 @@ class Agent:
 
         if total:
             print(f"[VectorMemory] ✅ 已补全 {total} 条记忆向量。")
+
+    def _backfill_doc_indexes(self) -> None:
+        """
+        Background: index all existing journal and diary files that haven't been
+        vectorized yet. Runs once after startup.
+        """
+        import time as _time
+        _time.sleep(15)  # 等待主向量索引先完成
+
+        # Index journals
+        if self.journal_index:
+            dates = self.journal.list_dates()
+            journal_new = 0
+            for date_str in dates:
+                if self.journal_index.has_indexed(date_str):
+                    continue
+                text = self.journal.read_day(date_str)
+                if text:
+                    added = self.journal_index.index_day(date_str, text)
+                    journal_new += added
+            if journal_new:
+                print(f"[JournalIndex] ✅ 已补全 {journal_new} 个 chunk 的向量（来自 {len(dates)} 天日志）。")
+
+        # Index diaries
+        if self.diary_index:
+            dates = self.diary.list_dates()
+            diary_new = 0
+            for date_str in dates:
+                if self.diary_index.has_indexed(date_str):
+                    continue
+                text = self.diary.read(date_str)
+                if text:
+                    added = self.diary_index.index_day(date_str, text)
+                    diary_new += added
+            if diary_new:
+                print(f"[DiaryIndex] ✅ 已补全 {diary_new} 个 chunk 的向量（来自 {len(dates)} 篇日记）。")
 
 
     def _register_builtins(self) -> None:
@@ -969,9 +1027,61 @@ class Agent:
                     # Unified Model Mode: The main model is omni-modal, handle it directly
                     print(f"  👁️ [Omni-Modal] 主模型将直接吞入多模态数据并保持 Tool 权限...")
 
-        # Add user message to session persistence immediately
-        session.add_message("user", user_input)
-        self.sessions.save()
+        # --- Ask User Intercept ---
+        # Find if the last assistant message has an un-responded ask_user tool call
+        history = session.get_history()
+        pending_ask_user_id = None
+        
+        # Scan backward to find the last assistant message
+        last_assistant_idx = -1
+        for i in range(len(history) - 1, -1, -1):
+            if history[i].get("role") == "assistant":
+                last_assistant_idx = i
+                break
+                
+        if last_assistant_idx != -1:
+            last_msg = history[last_assistant_idx]
+            tcs = last_msg.get("tool_calls", [])
+            # Collect all answered tool_call_ids after this assistant message
+            answered_ids = set()
+            for msg in history[last_assistant_idx + 1:]:
+                if msg.get("role") == "tool" and "tool_call_id" in msg:
+                    answered_ids.add(msg["tool_call_id"])
+                    
+            unanswered_tcs = [tc for tc in tcs if tc.get("id") not in answered_ids]
+            
+            for tc in unanswered_tcs:
+                if tc.get("function", {}).get("name") == "ask_user":
+                    pending_ask_user_id = tc.get("id")
+                    break
+                    
+        if pending_ask_user_id and unanswered_tcs:
+            # Treat user input as the answer to ask_user, and cancel others
+            messages.extend(history)
+            for tc in unanswered_tcs:
+                tc_id = tc.get("id")
+                tc_name = tc.get("function", {}).get("name", "unknown")
+                if tc_id == pending_ask_user_id:
+                    content = f"User selected/replied: {user_input}"
+                else:
+                    content = "Cancelled due to ask_user interrupt."
+                    
+                tool_msg = {
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "name": tc_name,
+                    "content": content,
+                }
+                messages.append(tool_msg)
+                session.add_message(**tool_msg)
+            self.sessions.save()
+        else:
+            # Normal chat flow
+            messages.extend(history)
+            messages.append({"role": "user", "content": user_input})
+            # Add user message to session persistence immediately
+            session.add_message("user", user_input)
+            self.sessions.save()
 
         for _ in range(max_tool_rounds):
             response = self.client.chat.completions.create(
@@ -1029,6 +1139,15 @@ class Agent:
                     # Ensure result is a plain string and not excessively long
                     if not isinstance(result, str):
                         result = str(result)
+                    
+                    # Check for ask_user interrupt AFTER ensuring result is a string
+                    is_ask_user_interrupt = (result == "__ASK_USER_INTERRUPT__")
+                    
+                    if is_ask_user_interrupt:
+                        # For ask_user, we still need to append a tool response to satisfy API requirements
+                        result = "Waiting for user response..."
+                        final_response = "（正在等待您做出选择...）"
+                    
                     print(f"  [Result] {result[:120]}")
 
                     if result.strip().startswith("❌") or "Traceback (most recent call last):" in result:
@@ -1044,7 +1163,14 @@ class Agent:
                     # Persist tool result to session
                     session.add_message(**tool_msg)
                     self.sessions.save()
+                    
+                    # Break AFTER appending the tool response for ask_user
+                    if is_ask_user_interrupt:
+                        break # Break from tool calls loop
                 
+                if final_response == "（正在等待您做出选择...）":
+                    break # Break from max_tool_rounds loop if ask_user was called
+
                 if round_had_error:
                     consecutive_errors += 1
                 else:
@@ -1092,23 +1218,70 @@ class Agent:
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_prompt}
         ]
-        messages.extend(session.get_history())
-        messages.append({"role": "user", "content": user_input})
+        # --- Ask User Intercept ---
+        history = session.get_history()
+        pending_ask_user_id = None
         
-        # Persist user message — for multimodal input, store a text-only summary
-        # to avoid bloating the session JSON with base64 image data.
-        if isinstance(user_input, list):
-            text_parts = [item.get("text", "") for item in user_input if isinstance(item, dict) and item.get("type") == "text"]
-            has_image = any(isinstance(item, dict) and item.get("type") == "image_url" for item in user_input)
-            user_text = "".join(text_parts).strip()
-            if has_image:
-                summary = f"[图片] {user_text}" if user_text else "[图片]"
-            else:
-                summary = user_text or "（非文本内容）"
-            session.add_message("user", summary)
+        # Scan backward to find the last assistant message
+        last_assistant_idx = -1
+        for i in range(len(history) - 1, -1, -1):
+            if history[i].get("role") == "assistant":
+                last_assistant_idx = i
+                break
+                
+        if last_assistant_idx != -1:
+            last_msg = history[last_assistant_idx]
+            tcs = last_msg.get("tool_calls", [])
+            # Collect all answered tool_call_ids after this assistant message
+            answered_ids = set()
+            for msg in history[last_assistant_idx + 1:]:
+                if msg.get("role") == "tool" and "tool_call_id" in msg:
+                    answered_ids.add(msg["tool_call_id"])
+                    
+            unanswered_tcs = [tc for tc in tcs if tc.get("id") not in answered_ids]
+            
+            for tc in unanswered_tcs:
+                if tc.get("function", {}).get("name") == "ask_user":
+                    pending_ask_user_id = tc.get("id")
+                    break
+                    
+        if pending_ask_user_id and unanswered_tcs:
+            messages.extend(history)
+            for tc in unanswered_tcs:
+                tc_id = tc.get("id")
+                tc_name = tc.get("function", {}).get("name", "unknown")
+                if tc_id == pending_ask_user_id:
+                    content = f"User selected/replied: {user_input if not isinstance(user_input, list) else 'Selection made'}"
+                else:
+                    content = "Cancelled due to ask_user interrupt."
+                    
+                tool_msg = {
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "name": tc_name,
+                    "content": content,
+                }
+                messages.append(tool_msg)
+                session.add_message(**tool_msg)
+            self.sessions.save()
         else:
-            session.add_message("user", user_input)
-        self.sessions.save()
+            messages.extend(history)
+            messages.append({"role": "user", "content": user_input})
+            
+            # Persist user message — for multimodal input, store a text-only summary
+            # to avoid bloating the session JSON with base64 image data.
+            if isinstance(user_input, list):
+                text_parts = [item.get("text", "") for item in user_input if isinstance(item, dict) and item.get("type") == "text"]
+                has_image = any(isinstance(item, dict) and item.get("type") == "image_url" for item in user_input)
+                user_text = "".join(text_parts).strip()
+                if has_image:
+                    summary = f"[图片] {user_text}" if user_text else "[图片]"
+                else:
+                    summary = user_text or "（非文本内容）"
+                session.add_message("user", summary)
+            else:
+                session.add_message("user", user_input)
+            self.sessions.save()
 
         tools = self.skills.get_tool_definitions()
         
@@ -1192,13 +1365,6 @@ class Agent:
             
             loop = asyncio.get_event_loop()
             try:
-                # Debug logging to catch the malformed payload
-                import json
-                print(f"\n--- [DEBUG] Payload Messages (Round {round_idx}) ---")
-                for m in messages:
-                    print(json.dumps(m, ensure_ascii=False))
-                print("--------------------------------------------------\n")
-
                 # We use streaming for standard text to provide real-time typing effect to frontend.
                 response = await loop.run_in_executor(
                     None,
@@ -1274,11 +1440,33 @@ class Agent:
                     })
                     
                     try:
-                        result = await self.skills.execute(name, params)
+                        result = await self.skills.execute(name, params) # Changed to await self.skills.execute
                         if not isinstance(result, str):
                             result = str(result)
                     except Exception as e:
                         result = f"Traceback (most recent call last): {e}"
+                    
+                    # Check for ask_user interrupt
+                    is_ask_user_interrupt = (result == "__ASK_USER_INTERRUPT__")
+                    
+                    if is_ask_user_interrupt:
+                        # Parse options if it's a string (LLM sometimes returns JSON string instead of array)
+                        options = params.get("options", [])
+                        if isinstance(options, str):
+                            try:
+                                options = json.loads(options)
+                            except (json.JSONDecodeError, TypeError):
+                                options = []
+                        
+                        # Yield a special tool_result event with options if available so frontend knows
+                        yield _yield_event({
+                            "type": "ask_user_interrupt",
+                            "question": params.get("question", "请选择："),
+                            "options": options,
+                            "allow_multiple": params.get("allow_multiple", False)
+                        })
+                        # Replace the interrupt marker with a proper response for the API
+                        result = "Waiting for user response..."
 
                     yield _yield_event({
                         "type": "tool_result",
@@ -1300,11 +1488,21 @@ class Agent:
                     messages.append(tool_msg)
                     # Persist tool result to session
                     session.add_message(**tool_msg)
+                    
+                    # Exit stream AFTER appending the tool response
+                    if is_ask_user_interrupt:
+                        self.sessions.save()
+                        return  # Exit stream immediately
                 
                 if round_had_error:
-                    final_response = "⚠️ **执行中止**：工具调用遭遇报错，为安全起见已停止自动重试。"
+                    consecutive_errors += 1
+                else:
+                    consecutive_errors = 0
+
+                if consecutive_errors >= 3:
+                    final_response = "⚠️ **执行安全中止**：检测到连续多次工具调用报错，已主动停止任务。建议检查日志后重试。"
                     self.sessions.save()
-                    yield _yield_event({"type": "message", "content": ""}) # Trigger UI finalize
+                    yield _yield_event({"type": "message", "content": ""})
                     break
                     
                 continue
@@ -1393,10 +1591,26 @@ class Agent:
                 continue  # No activity on this day
 
             # Found an un-processed day!
-            self._emit_system_event(f"🔍 发现 {check_date} 的日志尚未总结，已将其加入后台自我进化队列...")
+            self._emit_system_event(f"[Startup] 发现 {check_date} 的日志尚未总结，正在执行补档进化...")
             
             # 串行处理历史遗留任务，每个日期之间增加间隔，防止 429 报错
-            _run_evolution(check_date)
+            try:
+                self._summarize_day_conversations(check_date)
+                new_mems = self.evolution.evolve_from_journal(check_date)
+                research_count = sum(1 for m in new_mems if m.startswith("[探索研究]"))
+                base_count = len(new_mems) - research_count
+                if new_mems:
+                    parts = []
+                    if base_count:
+                        parts.append(f"{base_count} 条日志记忆")
+                    if research_count:
+                        parts.append(f"{research_count} 条主动探索知识")
+                    self._emit_system_event(f"[Startup] {check_date} 补档完成，习得 {' + '.join(parts)}。")
+                else:
+                    self._emit_system_event(f"[Startup] {check_date} 补档完成，无新记忆。")
+                self.evolution.evolve_persona()
+            except Exception as e:
+                self._emit_system_event(f"[Startup] {check_date} 补档进化出错: {e}")
             import time
             time.sleep(5) # 每个补做任务之间休息 5 秒
 
@@ -1416,13 +1630,20 @@ class Agent:
                     # Step 1: 汇总昨天所有聊天记录写入 journal
                     self._summarize_day_conversations(d)
 
-                    # Step 2: 基于完整 journal (视觉日志 + 聊天总结) 生成 diary + 提取记忆
-                    self._emit_system_event(f"🧠 开始后台自我进化：分析 {d} 日志...")
+                    # Step 2: 基于完整 journal (视觉日志 + 聊天总结) 生成 diary + 提取记忆 + 主动探索
+                    self._emit_system_event(f"[Evolution] 开始后台自我进化：分析 {d} 日志...")
                     new_mems = self.evolution.evolve_from_journal(d)
+                    research_count = sum(1 for m in new_mems if m.startswith("[探索研究]"))
+                    base_count = len(new_mems) - research_count
                     if new_mems:
-                        self._emit_system_event(f"✨ 后台进化完成！习得了 {len(new_mems)} 条新记忆。")
+                        parts = []
+                        if base_count:
+                            parts.append(f"{base_count} 条日志记忆")
+                        if research_count:
+                            parts.append(f"{research_count} 条主动探索知识")
+                        self._emit_system_event(f"[Evolution] 后台进化完成，习得 {' + '.join(parts)}。")
                     else:
-                        self._emit_system_event(f"✅ 后台进化完成，未通过日志发现新知识。")
+                        self._emit_system_event(f"[Evolution] 后台进化完成，未发现新知识。")
 
                     # Step 3: 尝试人设微调
                     self.evolution.evolve_persona()
@@ -1470,9 +1691,18 @@ class Agent:
 
         def _extract_text(content) -> str:
             if isinstance(content, str):
+                # Filter out base64 image data URLs
+                if content.startswith("data:image/") and ";base64," in content:
+                    return "[图片]"
                 return content
             if isinstance(content, list):
-                parts = [item.get("text", "") for item in content if isinstance(item, dict) and item.get("type") == "text"]
+                parts = []
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get("type") == "text":
+                            parts.append(item.get("text", ""))
+                        elif item.get("type") == "image_url":
+                            parts.append("[图片]")
                 return " ".join(parts) or "(非文本内容)"
             return str(content)
 
@@ -1581,7 +1811,60 @@ class Agent:
 
         conversation_text = "\n".join(lines)
 
-        # 3. 用 LLM 总结
+        # 3. RAG: 搜索与今天内容相关的历史日志/日记，提供给 LLM 用于去重判断
+        historical_context_parts = []
+        
+        # 让 AI 提取今天的核心搜索词
+        query_text = ""
+        try:
+            print(f"[System] 🔍 正在分析今日记录以提取特征搜索词...")
+            q_resp = self.client.chat.completions.create(
+                model=self.evolution_model,
+                messages=[
+                    {"role": "system", "content": "你是一个精确的关键词提取器。请阅读以下今日的记录，提取出 3-5 个最重要的核心名词、项目名或核心动作（以空格分隔），总字数限制在 30 个字以内，不要多余解释。"},
+                    {"role": "user", "content": conversation_text[:4000]} # 截取前4000字符提取关键词
+                ],
+                max_tokens=100,
+                temperature=0.3,
+            )
+            query_text = q_resp.choices[0].message.content.strip()
+            print(f"[System] 🔑 提取的搜索词: {query_text}")
+        except Exception as e:
+            print(f"[System] ⚠️ 提取搜索词失败: {e}")
+            query_text = conversation_text[:1000]
+
+        if query_text and self.journal_index:
+            try:
+                j_results = self.journal_index.search(query_text, top_k=15)
+                # 只取不是今天的结果
+                j_filtered = [r for r in j_results if r["date"] != date_str]
+                if j_filtered:
+                    j_lines = [f"- [{r['date']}] {r['text'][:150]}..." for r in j_filtered]
+                    historical_context_parts.append("【相关历史日志片段】\n" + "\n".join(j_lines))
+            except Exception as e:
+                print(f"[System] Journal RAG error: {e}")
+
+        if query_text and self.diary_index:
+            try:
+                d_results = self.diary_index.search(query_text, top_k=15)
+                d_filtered = [r for r in d_results if r["date"] != date_str]
+                if d_filtered:
+                    d_lines = [f"- [{r['date']}] {r['text'][:150]}..." for r in d_filtered]
+                    historical_context_parts.append("【相关历史日记片段】\n" + "\n".join(d_lines))
+            except Exception as e:
+                print(f"[System] Diary RAG error: {e}")
+
+        historical_context = "\n\n".join(historical_context_parts)
+        history_section = ""
+        if historical_context:
+            history_section = (
+                f"\n\n## 与今天内容相关的历史参考\n"
+                f"{historical_context}\n\n"
+                f"⚠️ 请参考以上历史参考，如果今天发生的事情（如继续写某个项目、日常调试等）"
+                f"已经在历史中反复出现过，请将其合并为一句话简略概括，重点提取今天**不同于往日**的新内容。\n"
+            )
+
+        # 4. 用 LLM 总结
         print(f"[System] 📝 正在总结 {date_str} 的 {len(all_conversations)} 条聊天记录...")
         try:
             prompt = (
@@ -1590,8 +1873,10 @@ class Agent:
                 f"1. 主题名称（如：代码调试、工具记录等）\n"
                 f"2. 用户的问题或需求\n"
                 f"3. AI 的回答与操作记录（特别是工具纠错记录，需要完整提炼出解决思路）\n"
+                f"对于系统视觉感知与状态记录类的日志，用一到两句话极度概括即可，无需展开。\n"
                 f"保留具体事实，去除无意义的寒暄。用 Markdown 格式输出。\n"
-                f"总字数控制在 2500 字以内。\n\n"
+                f"总字数控制在 1500 字以内。"
+                f"{history_section}\n"
                 f"## {date_str} 聊天记录\n{conversation_text}"
             )
             resp = self.client.chat.completions.create(
@@ -1606,7 +1891,23 @@ class Agent:
             # Fallback: 直接把原始对话截断写入
             summary = conversation_text[:2000]
 
-        # 4. 写入 journal
+        # 5. 写入 journal
         journal_entry = f"**[聊天总结]** 共 {len(all_conversations)} 条消息\n{summary}"
         self.journal.append(journal_entry, date_str=date_str)
         print(f"[System] ✅ {date_str} 聊天总结已写入日志。")
+
+        # 6. 将当天完整日志更新到向量索引（或首次建立索引）
+        if self.journal_index:
+            try:
+                full_day_text = self.journal.read_day(date_str) or ""
+                # 强制重建当天索引：移除旧的再重新索引
+                if self.journal_index.has_indexed(date_str):
+                    self.journal_index._chunks = [
+                        c for c in self.journal_index._chunks if c.date != date_str
+                    ]
+                    del self.journal_index._indexed_dates[date_str]
+                    self.journal_index._rewrite()
+                self.journal_index.index_day(date_str, full_day_text)
+            except Exception as e:
+                print(f"[System] JournalIndex update error: {e}")
+

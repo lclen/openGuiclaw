@@ -13,6 +13,34 @@ def register(manager: SkillManager) -> None:
     """Register basic utility skills."""
 
     @manager.skill(
+        name="ask_user",
+        description="向用户提供结构化的单选/多选选项，或者询问用户具体问题以获得交互式选择而非常规文本回复。如果你需要让用户从几个预设选项中做决定，必须调用此工具。",
+        parameters={
+            "properties": {
+                "question": {"type": "string", "description": "在此输入你要问用户的文字描述"},
+                "options": {
+                    "type": "array",
+                    "description": "选项列表。只有在此列出，前端才会显示交互按钮。",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "description": "机器可读的该选项唯一ID标识，必须"},
+                            "label": {"type": "string", "description": "展示给用户看的纯中文字母文案，必须"}
+                        },
+                        "required": ["id", "label"]
+                    }
+                },
+                "allow_multiple": {"type": "boolean", "description": "是否支持多选，默认为 false", "default": False}
+            },
+            "required": ["question", "options"],
+        },
+        category="interaction"
+    )
+    def ask_user(question: str, options: list, allow_multiple: bool = False) -> str:
+        # Backend intercepts __ASK_USER_INTERRUPT__ so we return this magic string
+        return "__ASK_USER_INTERRUPT__"
+
+    @manager.skill(
         name="get_time",
         description="返回当前日期和时间。",
         parameters={"properties": {}, "required": []},

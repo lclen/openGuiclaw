@@ -213,11 +213,17 @@ class ContextManager:
 
         if self.verbose:
             status_icon = {
-                "working": "💻", "idle": "😴",
-                "error": "🔴", "entertainment": "🎮",
-            }.get(status, "❓")
-            print(f"[Context] {status_icon} {status} — {summary[:60]}")
-            print("You > ", end="", flush=True)  # 重新打印输入提示符
+                "working": "[Work]", "idle": "[Idle]",
+                "error": "[ERR]", "entertainment": "[Game]",
+            }.get(status, "[?]")
+            try:
+                print(f"[Context] {status_icon} {status} — {summary[:60]}")
+                print("You > ", end="", flush=True)  # 重新打印输入提示符
+            except UnicodeEncodeError:
+                # 兼容 Windows GBK 控制台报错
+                safe_summary = summary[:60].encode('gbk', 'replace').decode('gbk')
+                print(f"[Context] {status_icon} {status} — {safe_summary}")
+                print("You > ", end="", flush=True)
 
         # 将分析结果推送到 log_queue，供前端 SSE 广播
         if self.log_queue is not None:

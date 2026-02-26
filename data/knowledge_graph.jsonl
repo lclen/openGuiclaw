@@ -80,3 +80,26 @@
 {"subject": "AI", "relation": "查询天气", "object": "南京", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
 {"subject": "AI 新闻汇总", "relation": "涵盖内容", "object": "Gemini 3.1 Pro 发布", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
 {"subject": "AI 新闻汇总", "relation": "涵盖内容", "object": "Nvidia 与 OpenAI 投资协议", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "米勒", "relation": "是", "object": "用户", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "米勒", "relation": "居住在", "object": "南京", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "用户", "relation": "正在开发", "object": "qwen_autogui", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "qwen_autogui", "relation": "基于语言", "object": "Python", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "qwen_autogui", "relation": "使用工具", "object": "autogui", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "用户", "relation": "使用编辑器", "object": "VSCode", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "qwen_autogui", "relation": "集成", "object": "VRM 虚拟角色模型", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "qwen_autogui", "relation": "使用模型工具", "object": "VRoid", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "AI 助手", "relation": "使用命令工具", "object": "PowerShell", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "Win+R", "relation": "适用于", "object": "系统命令或网址", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "server.py", "relation": "属于项目", "object": "qwen_autogui", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "browser.py", "relation": "属于项目", "object": "qwen_autogui", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "用户", "relation": "编辑", "object": "naboot_autogui", "source": "journal:2026-02-24", "ts": "2026-02-25 19:23:34"}
+{"subject": "用户", "relation": "处理", "object": "yaen_autogui", "source": "journal:2026-02-24", "ts": "2026-02-25 19:23:34"}
+{"subject": "naboot_autogui", "relation": "是", "object": "Python 自动化项目", "source": "journal:2026-02-24", "ts": "2026-02-25 19:23:34"}
+{"subject": "yaen_autogui", "relation": "是", "object": "自动化项目", "source": "journal:2026-02-24", "ts": "2026-02-25 19:23:34"}
+{"subject": "yaen_autogui", "relation": "运行", "object": "Python 脚本", "source": "journal:2026-02-24", "ts": "2026-02-25 19:23:34"}
+{"subject": "用户", "relation": "运行", "object": "FastAPI", "source": "journal:2026-02-25", "ts": "2026-02-26 16:21:17"}
+{"subject": "用户", "relation": "运行", "object": "OpenWebUI", "source": "journal:2026-02-25", "ts": "2026-02-26 16:21:17"}
+{"subject": "用户", "relation": "编辑", "object": "配置文件", "source": "journal:2026-02-25", "ts": "2026-02-26 16:21:17"}
+{"subject": "nanobot", "relation": "是", "object": "代理项目", "source": "journal:2026-02-25", "ts": "2026-02-26 16:21:17"}
+{"subject": "Journal", "relation": "是", "object": "开发任务", "source": "journal:2026-02-25", "ts": "2026-02-26 16:21:17"}
+{"subject": "系统", "relation": "监控", "object": "用户", "source": "journal:2026-02-25", "ts": "2026-02-26 16:21:17"}

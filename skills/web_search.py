@@ -30,16 +30,43 @@ def register(manager: SkillManager) -> None:
             },
             "required": ["url"],
         },
+        ui_config=[
+            {
+                "key": "default_max_chars",
+                "label": "默认最大提取字符数",
+                "type": "text",
+                "default": "3000",
+                "help": "如果没有传入 max_chars，则使用该配置值"
+            },
+            {
+                "key": "proxy_url",
+                "label": "代理地址 (可选)",
+                "type": "text",
+                "default": "",
+                "help": "例如: http://127.0.0.1:7890"
+            }
+        ],
         category="web",
     )
-    def web_fetch(url: str, max_chars: int = 3000) -> str:
+    def web_fetch(url: str, max_chars: int = None) -> str:
         try:
             import requests
             from bs4 import BeautifulSoup
         except ImportError:
             return "❌ 缺少依赖：请执行 `pip install requests beautifulsoup4`"
 
-        max_chars = min(int(max_chars), 8000)
+        # retrieve config
+        agent = getattr(manager, "_agent", None) # manager generally not holding agent explicitly, but we registered it, so let's fish it out from _registry
+        skill_def = manager.get("web_fetch")
+        if skill_def:
+            config = skill_def.config_values
+            default_max = int(config.get("default_max_chars") or 3000)
+            proxy_url = config.get("proxy_url") or ""
+        else:
+            default_max = 3000
+            proxy_url = ""
+
+        max_chars = min(int(max_chars or default_max), 8000)
 
         headers = {
             "User-Agent": (
@@ -49,9 +76,11 @@ def register(manager: SkillManager) -> None:
             ),
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         }
+        
+        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
 
         try:
-            resp = requests.get(url, headers=headers, timeout=15)
+            resp = requests.get(url, headers=headers, proxies=proxies, timeout=15)
             resp.raise_for_status()
             resp.encoding = resp.apparent_encoding  # handle charset correctly
         except requests.exceptions.Timeout:

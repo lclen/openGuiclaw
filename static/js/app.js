@@ -44,11 +44,11 @@ class App {
             // 使用正确的 API: initThreeJS(canvasId, containerId)
             await this.vrmManager.initThreeJS('vrm-canvas', 'canvas-container');
 
-            // 挂载可能存在的其它模块
-            if (window.VRMInteraction) {
+            // 挂载可能存在的其它模块（_initModules 已在构造函数中处理，此处仅补充未加载的情况）
+            if (!this.vrmManager.interaction && window.VRMInteraction) {
                 this.vrmManager.interaction = new window.VRMInteraction(this.vrmManager);
             }
-            if (window.VRMExpression) {
+            if (!this.vrmManager.expression && window.VRMExpression) {
                 this.vrmManager.expression = new window.VRMExpression(this.vrmManager);
             }
 
@@ -76,12 +76,12 @@ class App {
                 console.warn('[App] 读取服务端偏好失败，使用本地缓存:', e);
             }
 
-            let loadSuccess;
+            let loadSuccess = false;
             try {
-                loadSuccess = await this.vrmManager.loadModel(modelToLoad, { autoPlay: true });
+                const result = await this.vrmManager.loadModel(modelToLoad, { autoPlay: true });
+                loadSuccess = result !== false && result !== null && result !== undefined;
             } catch (e) {
                 console.error("[App] VRM 模型加载失败:", e);
-                // 向用户显示错误提示
                 const errEl = document.getElementById('vrm-load-error');
                 if (errEl) {
                     errEl.textContent = `VRM 模型加载失败: ${e.message}`;

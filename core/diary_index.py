@@ -1,11 +1,11 @@
 """
-Journal Index: Semantic search over daily journal logs.
+Diary Index: Semantic search over AI's daily diary entries.
 
-Journals live in data/journals/YYYY-MM-DD.md.
+Diaries live in data/diary/YYYY-MM-DD.md.
 This module splits them into chunks, embeds them via Qwen,
-and stores the results in data/journal_vectors.jsonl.
+and stores the results in data/diary_vectors.jsonl.
 
-Each line in journal_vectors.jsonl:
+Each line in diary_vectors.jsonl:
     {"date": "2026-02-19", "chunk": 0, "text": "...", "v": [...]}
 
 On search, all chunks are scored and the top-k unique (date, chunk) pairs
@@ -13,15 +13,14 @@ are returned with their text snippets.
 """
 
 import json
-import time
 from pathlib import Path
 from typing import List, Optional, Dict, Tuple
 
 from core.vector_memory import split_text, _cosine_similarity
 
 
-class JournalChunk:
-    """A single indexed piece of a journal."""
+class DiaryChunk:
+    """A single indexed piece of a diary entry."""
     def __init__(self, date: str, chunk_idx: int, text: str, vector: List[float]):
         self.date = date
         self.chunk_idx = chunk_idx
@@ -29,21 +28,21 @@ class JournalChunk:
         self.vector = vector
 
 
-class JournalIndex:
+class DiaryIndex:
     """
-    Manages semantic indexing of daily journal files.
+    Manages semantic indexing of daily diary files (data/diary/YYYY-MM-DD.md).
 
     Usage:
-        ji = JournalIndex(embedding_client, data_dir="data")
-        ji.index_day("2026-02-19", journal_text)
-        results = ji.search("上周做了什么", top_k=3)
+        di = DiaryIndex(embedding_client, data_dir="data")
+        di.index_day("2026-02-19", diary_text)
+        results = di.search("今天做了什么有趣的事", top_k=5)
     """
 
     def __init__(self, embedding_client, data_dir: str = "data"):
         self.embedding_client = embedding_client
         self.data_dir = Path(data_dir)
-        self.index_file = self.data_dir / "journal_vectors.jsonl"
-        self._chunks: List[JournalChunk] = []
+        self.index_file = self.data_dir / "diary_vectors.jsonl"
+        self._chunks: List[DiaryChunk] = []
         self._indexed_dates: Dict[str, int] = {}  # date -> chunk count
         self._load()
 
@@ -54,7 +53,7 @@ class JournalIndex:
 
     def index_day(self, date_str: str, text: str) -> int:
         """
-        Split and vectorize a day's journal text.
+        Split and vectorize a day's diary text.
         Skips if already indexed.
         Returns the number of chunks added.
         """
@@ -70,9 +69,9 @@ class JournalIndex:
         for i, (chunk_text, vec) in enumerate(zip(chunks_text, vectors)):
             if not vec:
                 continue
-            jc = JournalChunk(date_str, i, chunk_text, vec)
-            self._chunks.append(jc)
-            self._save_one(jc)
+            dc = DiaryChunk(date_str, i, chunk_text, vec)
+            self._chunks.append(dc)
+            self._save_one(dc)
             count += 1
 
         if count:
@@ -81,7 +80,7 @@ class JournalIndex:
 
     def search(self, query: str, top_k: int = 5) -> List[Dict]:
         """
-        Semantic search over all journal chunks.
+        Semantic search over all diary chunks.
         Returns [{date, text, score}] sorted by score DESC.
         """
         if not self._chunks:
@@ -93,10 +92,10 @@ class JournalIndex:
 
         # Score all chunks, pick highest per date (max-pooling per date)
         best: Dict[str, Tuple[float, str]] = {}  # date -> (score, text)
-        for jc in self._chunks:
-            score = _cosine_similarity(query_vec, jc.vector)
-            if jc.date not in best or score > best[jc.date][0]:
-                best[jc.date] = (score, jc.text)
+        for dc in self._chunks:
+            score = _cosine_similarity(query_vec, dc.vector)
+            if dc.date not in best or score > best[dc.date][0]:
+                best[dc.date] = (score, dc.text)
 
         results = [
             {"date": date, "score": score, "text": text}
@@ -120,35 +119,35 @@ class JournalIndex:
                     if not line:
                         continue
                     data = json.loads(line)
-                    jc = JournalChunk(
+                    dc = DiaryChunk(
                         date=data["date"],
                         chunk_idx=data.get("chunk", 0),
                         text=data.get("text", ""),
                         vector=data.get("v", []),
                     )
-                    self._chunks.append(jc)
-                    self._indexed_dates[jc.date] = self._indexed_dates.get(jc.date, 0) + 1
+                    self._chunks.append(dc)
+                    self._indexed_dates[dc.date] = self._indexed_dates.get(dc.date, 0) + 1
         except Exception as e:
-            print(f"[JournalIndex] Load error: {e}")
+            print(f"[DiaryIndex] Load error: {e}")
 
-    def _save_one(self, jc: JournalChunk) -> None:
+    def _save_one(self, dc: DiaryChunk) -> None:
         with open(self.index_file, "a", encoding="utf-8") as f:
             record = {
-                "date": jc.date,
-                "chunk": jc.chunk_idx,
-                "text": jc.text,
-                "v": jc.vector,
+                "date": dc.date,
+                "chunk": dc.chunk_idx,
+                "text": dc.text,
+                "v": dc.vector,
             }
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def _rewrite(self) -> None:
         """Rewrite the index file from the in-memory chunk list (used after removal)."""
         with open(self.index_file, "w", encoding="utf-8") as f:
-            for jc in self._chunks:
+            for dc in self._chunks:
                 record = {
-                    "date": jc.date,
-                    "chunk": jc.chunk_idx,
-                    "text": jc.text,
-                    "v": jc.vector,
+                    "date": dc.date,
+                    "chunk": dc.chunk_idx,
+                    "text": dc.text,
+                    "v": dc.vector,
                 }
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")

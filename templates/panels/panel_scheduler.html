@@ -1,0 +1,262 @@
+<!-- Scheduler Panel -->
+<div x-show="activePanel === 'scheduler'" class="h-full flex flex-col relative">
+    <!-- Header -->
+    <div class="flex items-center justify-between px-6 py-4 border-b border-white/10">
+        <div>
+            <h2 class="text-xl font-semibold text-white">计划任务</h2>
+            <p class="text-sm text-white/60 mt-1">定时自动触发 AI 请求或发送循环提醒</p>
+        </div>
+        <div class="flex gap-2">
+            <button @click="loadSchedulerTasks()"
+                class="px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded-lg transition-colors text-sm">
+                刷新
+            </button>
+            <button @click="openSchedulerForm()"
+                class="px-4 py-2 bg-green-500/20 hover:bg-green-500/30 text-green-300 rounded-lg transition-colors text-sm">
+                + 新建任务
+            </button>
+        </div>
+    </div>
+
+    <!-- Empty State / Loading -->
+    <div x-show="!showSchedulerForm && schedulerTasks.length === 0"
+        class="flex-1 flex flex-col items-center justify-center text-white/40">
+        <svg class="w-16 h-16 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <p>暂无计划任务，点击右上角新建</p>
+    </div>
+
+    <!-- Task List -->
+    <div x-show="!showSchedulerForm && schedulerTasks.length > 0"
+        class="flex-1 overflow-y-auto hidden-scrollbar p-6 space-y-4">
+        <template x-for="task in schedulerTasks" :key="task.id">
+            <div class="bg-white/5 border border-white/10 rounded-xl p-5 hover:bg-white/10 transition-colors">
+                <div class="flex items-start justify-between">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <h3 class="text-lg font-medium text-white" x-text="task.name"></h3>
+                            <span class="px-2 py-0.5 text-xs rounded-full"
+                                :class="task.enabled ? 'bg-green-500/20 text-green-300' : 'bg-gray-500/20 text-gray-300'"
+                                x-text="task.enabled ? '已启用' : '已禁用'"></span>
+                            <span class="px-2 py-0.5 text-xs rounded-full bg-blue-500/20 text-blue-300"
+                                x-text="task.task_type === 'reminder' ? '简单提醒' : '执行指令'"></span>
+                            <span class="px-2 py-0.5 text-xs rounded-full bg-purple-500/20 text-purple-300"
+                                x-text="task.trigger_type"></span>
+                        </div>
+                        <p class="text-sm text-white/60 mt-2" x-text="task.description"></p>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <label class="relative inline-flex items-center cursor-pointer mr-3" title="启用/禁用">
+                            <input type="checkbox" :checked="task.enabled" class="sr-only peer"
+                                @change="toggleSchedulerTask(task.id, $event.target.checked)">
+                            <div
+                                class="w-9 h-5 bg-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500">
+                            </div>
+                        </label>
+
+                        <button @click="triggerSchedulerTask(task.id)"
+                            class="p-2 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-300 rounded-lg transition-colors border border-yellow-500/30"
+                            title="手动执行一次">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                        </button>
+                        <button @click="editSchedulerTask(task)"
+                            class="p-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded-lg transition-colors border border-blue-500/30"
+                            title="编辑">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                            </svg>
+                        </button>
+                        <button @click="deleteSchedulerTask(task.id)"
+                            class="p-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg transition-colors border border-red-500/30"
+                            title="删除">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="mt-4 grid grid-cols-2 gap-4 text-sm text-white/50">
+                    <div class="bg-black/20 rounded p-2 border border-white/5">
+                        <span class="block text-xs uppercase opacity-70 mb-1">上次执行</span>
+                        <span x-text="task.last_run ? new Date(task.last_run).toLocaleString() : '从未'"></span>
+                    </div>
+                    <div class="bg-black/20 rounded p-2 border border-white/5">
+                        <span class="block text-xs uppercase opacity-70 mb-1">下次执行</span>
+                        <span x-text="task.next_run ? new Date(task.next_run).toLocaleString() : '未定'"></span>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <!-- Form Overlay -->
+    <div x-show="showSchedulerForm"
+        class="absolute inset-0 bg-gray-900/95 backdrop-blur-md z-20 flex flex-col p-6 overflow-y-auto hidden-scrollbar"
+        style="display: none;">
+        <div class="flex items-center justify-between mb-6">
+            <h3 class="text-xl font-bold text-white" x-text="schedulerFormData.id ? '编辑任务' : '新建任务'"></h3>
+            <button @click="closeSchedulerForm()" class="text-white/50 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+
+        <form @submit.prevent="saveSchedulerTask" class="space-y-6 max-w-2xl mx-auto w-full">
+            <!-- 名称与描述 -->
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-white/70 mb-1">任务名称 *</label>
+                    <input type="text" x-model="schedulerFormData.name" required
+                        class="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-blue-500/50">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-white/70 mb-1">状态</label>
+                    <div class="flex items-center h-10">
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" x-model="schedulerFormData.enabled" class="sr-only peer">
+                            <div
+                                class="w-11 h-6 bg-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500">
+                            </div>
+                            <span class="ml-3 text-sm font-medium text-white/70">启用</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="col-span-2">
+                    <label class="block text-sm font-medium text-white/70 mb-1">简单描述</label>
+                    <input type="text" x-model="schedulerFormData.description"
+                        class="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-blue-500/50">
+                </div>
+            </div>
+
+            <!-- 任务类型 -->
+            <div class="p-4 bg-white/5 border border-white/10 rounded-xl space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-white/70 mb-2">任务行为模式</label>
+                    <select x-model="schedulerFormData.task_type"
+                        class="w-full px-4 py-2 bg-slate-800 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500/50">
+                        <option value="task">发送给 Agent 的自然语言指令 (Task)</option>
+                        <option value="reminder">系统推送简单消息提示 (Reminder)</option>
+                    </select>
+                </div>
+
+                <div x-show="schedulerFormData.task_type === 'task'" class="space-y-2">
+                    <label class="block text-sm font-medium text-white/70">给助手的 Prompt 指令 *</label>
+                    <textarea x-model="schedulerFormData.prompt" rows="3" placeholder="例：请在网页上查一下今天的新闻，并生成一份简报发给我"
+                        class="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-blue-500/50"></textarea>
+                </div>
+
+                <div x-show="schedulerFormData.task_type === 'reminder'" class="space-y-2">
+                    <label class="block text-sm font-medium text-white/70">提醒文本内容 *</label>
+                    <textarea x-model="schedulerFormData.reminder_message" rows="2" placeholder="例：该喝水了！"
+                        class="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-blue-500/50"></textarea>
+                </div>
+            </div>
+
+            <!-- 触发器类型 -->
+            <div class="p-4 bg-white/5 border border-white/10 rounded-xl space-y-4">
+                <!-- Trigger Type Selection -->
+                <div class="space-y-2">
+                    <label class="block text-sm font-medium text-white/70">触发方式</label>
+                    <select x-model="schedulerFormData.trigger_type"
+                        class="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white outline-none focus:border-blue-500/50">
+                        <option class="bg-slate-900" value="once">一次性</option>
+                        <option class="bg-slate-900" value="daily">每天</option>
+                        <option class="bg-slate-900" value="weekly">每周</option>
+                        <option class="bg-slate-900" value="monthly">每月</option>
+                        <option class="bg-slate-900" value="interval">间隔重复</option>
+                        <option class="bg-slate-900" value="cron">自定义 Cron</option>
+                    </select>
+                </div>
+
+                <!-- Config for Once -->
+                <div x-show="schedulerFormData.trigger_type === 'once'" class="space-y-2">
+                    <label class="block text-sm font-medium text-white/70">执行时间</label>
+                    <input type="datetime-local" x-model="schedulerFormData.trigger_config_onceTime"
+                        class="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white outline-none focus:border-blue-500/50">
+                </div>
+
+                <!-- Config for Daily/Weekly/Monthly (Common Time Field) -->
+                <div x-show="['daily', 'weekly', 'monthly'].includes(schedulerFormData.trigger_type)" class="space-y-2">
+                    <label class="block text-sm font-medium text-white/70">执行时间 (HH:mm)</label>
+                    <input type="time" x-model="schedulerFormData.trigger_preset_time"
+                        class="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white outline-none focus:border-blue-500/50">
+                </div>
+
+                <!-- Config for Weekly -->
+                <div x-show="schedulerFormData.trigger_type === 'weekly'" class="space-y-2">
+                    <label class="block text-sm font-medium text-white/70">每周执行日</label>
+                    <select x-model="schedulerFormData.trigger_preset_weekday"
+                        class="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white outline-none focus:border-blue-500/50">
+                        <option class="bg-slate-900" value="1">周一</option>
+                        <option class="bg-slate-900" value="2">周二</option>
+                        <option class="bg-slate-900" value="3">周三</option>
+                        <option class="bg-slate-900" value="4">周四</option>
+                        <option class="bg-slate-900" value="5">周五</option>
+                        <option class="bg-slate-900" value="6">周六</option>
+                        <option class="bg-slate-900" value="0">周日</option>
+                    </select>
+                </div>
+
+                <!-- Config for Monthly -->
+                <div x-show="schedulerFormData.trigger_type === 'monthly'" class="space-y-2">
+                    <label class="block text-sm font-medium text-white/70">每月执行日</label>
+                    <select x-model="schedulerFormData.trigger_preset_day"
+                        class="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white outline-none focus:border-blue-500/50">
+                        <template x-for="d in 31" :key="d">
+                            <option class="bg-slate-900" :value="d" x-text="d + ' 日'"></option>
+                        </template>
+                    </select>
+                </div>
+
+                <!-- Config for Interval -->
+                <div x-show="schedulerFormData.trigger_type === 'interval'" class="grid grid-cols-2 gap-4">
+                    <div class="space-y-2">
+                        <label class="block text-sm font-medium text-white/70">间隔小时</label>
+                        <input type="number" x-model.number="schedulerFormData.trigger_config_intervalHours"
+                            class="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white outline-none focus:border-blue-500/50">
+                    </div>
+                    <div class="space-y-2">
+                        <label class="block text-sm font-medium text-white/70">间隔分钟</label>
+                        <input type="number" x-model.number="schedulerFormData.trigger_config_intervalMinutes"
+                            class="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white outline-none focus:border-blue-500/50">
+                    </div>
+                </div>
+
+                <!-- Config for Cron -->
+                <div x-show="schedulerFormData.trigger_type === 'cron'" class="space-y-2">
+                    <div class="flex justify-between items-center">
+                        <label class="block text-sm font-medium text-white/70">Cron 规则</label>
+                        <span class="text-xs text-white/40 italic">格式: 分 时 日 月 周</span>
+                    </div>
+                    <input type="text" x-model="schedulerFormData.trigger_config_cron" placeholder="0 9 * * *"
+                        class="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-yellow-300 outline-none focus:border-blue-500/50 font-mono">
+                    <p class="text-xs text-white/40">例："*/15 * * * *" 每15分钟，"0 9 * * *" 每天早九点</p>
+                </div>
+            </div>
+
+            <!-- 按钮 -->
+            <div class="flex justify-end gap-3 pt-4">
+                <button type="button" @click="closeSchedulerForm()"
+                    class="px-6 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-lg transition-colors">
+                    取消
+                </button>
+                <button type="submit"
+                    class="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors shadow-lg shadow-blue-500/20 font-medium">
+                    保存任务
+                </button>
+            </div>
+        </form>
+    </div>
+</div>

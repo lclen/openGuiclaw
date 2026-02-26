@@ -57,14 +57,16 @@
                                             <div class="md-body" x-html="block.html"></div>
                                         </template>
                                         <template x-if="block.type === 'tool'">
-                                            <div class="my-1.5 overflow-hidden rounded-xl border border-blue-200/50 bg-blue-50/40 backdrop-blur-sm transition-all hover:shadow-md">
+                                            <div
+                                                class="my-1.5 overflow-hidden rounded-xl border border-blue-200/50 bg-blue-50/40 backdrop-blur-sm transition-all hover:shadow-md">
                                                 <div class="flex items-center justify-between cursor-pointer px-3 py-2 group"
                                                     @click="block._collapsed = !block._collapsed">
                                                     <div class="flex items-center gap-2">
                                                         <div class="w-5 h-5 rounded-lg flex items-center justify-center"
                                                             :class="block.status === 'done' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'">
                                                             <svg x-show="block.status === 'running'"
-                                                                class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                                                class="w-3.5 h-3.5 animate-spin" fill="none"
+                                                                viewBox="0 0 24 24">
                                                                 <circle class="opacity-25" cx="12" cy="12" r="10"
                                                                     stroke="currentColor" stroke-width="4"></circle>
                                                                 <path class="opacity-75" fill="currentColor"
@@ -76,7 +78,8 @@
                                                                     stroke-width="2" d="M5 13l4 4L19 7" />
                                                             </svg>
                                                         </div>
-                                                        <span class="text-[11px] font-bold tracking-tight text-blue-700/80 uppercase"
+                                                        <span
+                                                            class="text-[11px] font-bold tracking-tight text-blue-700/80 uppercase"
                                                             x-text="block.name"></span>
                                                     </div>
                                                     <div class="flex items-center gap-1.5">
@@ -93,15 +96,22 @@
                                                 <div x-show="!block._collapsed"
                                                     class="px-3 pb-3 space-y-2 animate-in slide-in-from-top-1 duration-200">
                                                     <div class="relative">
-                                                        <div class="absolute -left-2 top-0 bottom-0 w-0.5 bg-blue-200/30"></div>
-                                                        <p class="text-[10px] text-blue-600/50 mb-1 font-semibold ml-1">输入参数</p>
+                                                        <div
+                                                            class="absolute -left-2 top-0 bottom-0 w-0.5 bg-blue-200/30">
+                                                        </div>
+                                                        <p class="text-[10px] text-blue-600/50 mb-1 font-semibold ml-1">
+                                                            输入参数</p>
                                                         <div class="bg-blue-600/5 p-2 rounded-lg border border-blue-600/5 overflow-x-auto text-[10px] font-mono text-blue-800/70 whitespace-pre-wrap break-all"
                                                             x-text="block.paramsStr"></div>
                                                     </div>
                                                     <template x-if="block.resultStr">
                                                         <div class="relative">
-                                                            <div class="absolute -left-2 top-0 bottom-0 w-0.5 bg-green-200/30"></div>
-                                                            <p class="text-[10px] text-green-600/50 mb-1 font-semibold ml-1">执行结果</p>
+                                                            <div
+                                                                class="absolute -left-2 top-0 bottom-0 w-0.5 bg-green-200/30">
+                                                            </div>
+                                                            <p
+                                                                class="text-[10px] text-green-600/50 mb-1 font-semibold ml-1">
+                                                                执行结果</p>
                                                             <div class="bg-green-600/5 p-2 rounded-lg border border-green-600/5 overflow-x-auto text-[10px] font-mono text-green-800/70 whitespace-pre-wrap break-all"
                                                                 x-text="block.resultStr"></div>
                                                         </div>
@@ -109,6 +119,37 @@
                                                 </div>
                                             </div>
                                         </template>
+
+                                        <!-- Ask User Interactive Block -->
+                                        <template x-if="block.type === 'ask_user'">
+                                            <div
+                                                class="my-2 p-3 bg-indigo-50/80 border border-indigo-200/60 rounded-xl shadow-sm">
+                                                <p class="text-[13px] font-semibold text-indigo-900 mb-3 ml-1"
+                                                    x-text="block.question"></p>
+
+                                                <!-- Action Buttons (hidden if answered) -->
+                                                <div x-show="!block.answered" class="flex flex-col gap-2">
+                                                    <template x-for="opt in block.options" :key="opt.id">
+                                                        <button @click="submitAskUserChoice(msg, block, opt)"
+                                                            class="w-full text-left px-3 py-2 bg-white hover:bg-indigo-100 border border-indigo-200 hover:border-indigo-300 rounded-lg text-sm text-indigo-800 transition-colors shadow-[0_1px_2px_rgba(0,0,0,0.05)] focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                                                            <span x-text="opt.label"></span>
+                                                        </button>
+                                                    </template>
+                                                </div>
+
+                                                <!-- Result feedback (shown after answered) -->
+                                                <div x-show="block.answered" class="flex items-center gap-2 mt-1 px-1">
+                                                    <svg class="w-4 h-4 text-green-500" fill="none"
+                                                        stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            stroke-width="2" d="M5 13l4 4L19 7" />
+                                                    </svg>
+                                                    <span class="text-xs text-indigo-700/80 font-medium"
+                                                        x-text="block.resultStr"></span>
+                                                </div>
+                                            </div>
+                                        </template>
+
                                     </div>
                                 </template>
                             </div>
@@ -116,17 +157,18 @@
 
                         <!-- Fallback for older messages -->
                         <template x-if="!msg.blocks || msg.blocks.length === 0">
-                            <div class="md-body mb-2" x-show="msg.html || msg.content"
-                                x-html="msg.html || msg.content"></div>
+                            <div class="md-body mb-2" x-show="msg.html || msg.content" x-html="msg.html || msg.content">
+                            </div>
                         </template>
                     </div>
                 </div>
 
                 <!-- Visual Log -->
                 <div x-show="msg.role === 'visual_log'" class="flex justify-center my-2">
-                    <div class="px-4 py-1.5 bg-black/20 border border-white/5 rounded-full backdrop-blur-sm max-w-[85%]">
+                    <div
+                        class="px-4 py-1.5 bg-black/20 border border-white/5 rounded-full backdrop-blur-sm max-w-[85%]">
                         <div class="text-[11px] text-white/50 flex space-x-2 leading-relaxed break-words text-center md-body"
-                            x-html="msg.html ? msg.html : (typeof marked !== 'undefined' ? marked.parseInline(msg.content||'') : msg.content)">
+                            x-html="msg.html || mdRender(msg.content || '')">
                         </div>
                     </div>
                 </div>
@@ -138,11 +180,8 @@
     <div class="px-4 pb-5">
         <div id="chat-input-area"
             class="rounded-2xl p-2 flex flex-col gap-2 shadow-2xl bg-white/5 border border-white/10 relative transition-all"
-            :class="isDragOver ? 'border-blue-400/60 bg-blue-500/10' : ''"
-            @dragover.prevent="isDragOver = true"
-            @dragleave.prevent="isDragOver = false"
-            @drop.prevent="handleDrop($event)"
-            @paste="handlePaste($event)">
+            :class="isDragOver ? 'border-blue-400/60 bg-blue-500/10' : ''" @dragover.prevent="isDragOver = true"
+            @dragleave.prevent="isDragOver = false" @drop.prevent="handleDrop($event)" @paste="handlePaste($event)">
 
             <!-- Drag-over overlay hint -->
             <div x-show="isDragOver"
@@ -153,7 +192,8 @@
             <!-- Pending image preview -->
             <div x-show="pendingImage" class="flex items-center gap-2 px-2 pt-1">
                 <div class="relative group">
-                    <img :src="pendingImage" class="h-16 w-auto max-w-[120px] rounded-lg object-cover border border-white/20 shadow" />
+                    <img :src="pendingImage"
+                        class="h-16 w-auto max-w-[120px] rounded-lg object-cover border border-white/20 shadow" />
                     <button @click="pendingImage = null; pendingImageFile = null"
                         class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 rounded-full text-white text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                         ✗
@@ -163,8 +203,7 @@
             </div>
 
             <!-- Slash Command Menu -->
-            <div x-show="showCommandMenu && filteredCommands.length > 0"
-                @click.outside="showCommandMenu = false"
+            <div x-show="showCommandMenu && filteredCommands.length > 0" @click.outside="showCommandMenu = false"
                 class="absolute bottom-full left-0 mb-2 w-full bg-[#1e293b] border border-white/20 rounded-xl shadow-xl overflow-hidden z-50">
                 <template x-for="(cmd, index) in filteredCommands" :key="index">
                     <div @click="selectCommand(cmd)" @mouseenter="commandSelectedIndex = index"
@@ -188,9 +227,8 @@
                 <div class="flex-1 px-3 py-1.5">
                     <textarea x-model="inputText" @keydown.enter.prevent="handleEnter($event)"
                         @keydown.up.prevent="navigateCommand(-1, $event)"
-                        @keydown.down.prevent="navigateCommand(1, $event)"
-                        @input="handleInput($event); autoResize($el)" :disabled="isReceiving"
-                        placeholder="和我说说话吧... (输入 / 查看快捷指令，可粘贴或拖入图片)" rows="1"
+                        @keydown.down.prevent="navigateCommand(1, $event)" @input="handleInput($event); autoResize($el)"
+                        :disabled="isReceiving" placeholder="和我说说话吧... (输入 / 查看快捷指令，可粘贴或拖入图片)" rows="1"
                         class="w-full bg-transparent outline-none text-white text-sm placeholder-white/30 resize-none leading-relaxed disabled:opacity-40"></textarea>
                 </div>
                 <button @click="isReceiving ? abortReceiving() : sendMessage()"

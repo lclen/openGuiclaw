@@ -28,8 +28,8 @@
             返回列表
         </button>
         <div class="flex-1 overflow-y-auto custom-scrollbar px-4 pb-4">
-            <pre class="text-white/80 text-xs leading-relaxed whitespace-pre-wrap"
-                x-text="selectedDiaryContent"></pre>
+            <div class="text-white/80 text-xs leading-relaxed md-body"
+                x-html="typeof marked !== 'undefined' ? marked.parse(selectedDiaryContent || '') : selectedDiaryContent"></div>
         </div>
     </div>
 </div>

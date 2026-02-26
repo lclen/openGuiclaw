@@ -25,7 +25,11 @@
     </script>
 
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
         body {
             font-family: 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
@@ -44,7 +48,12 @@
             transition: all 0.2s ease;
             color: rgba(255, 255, 255, 0.75);
         }
-        .sidebar-btn:hover { background: rgba(255, 255, 255, 0.15); color: white; }
+
+        .sidebar-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: white;
+        }
+
         .sidebar-btn.active {
             background: rgba(99, 179, 237, 0.3);
             color: white;
@@ -52,16 +61,36 @@
         }
 
         @keyframes slideInUp {
-            from { opacity: 0; transform: translateY(12px) scale(0.98); }
-            to   { opacity: 1; transform: translateY(0) scale(1); }
+            from {
+                opacity: 0;
+                transform: translateY(12px) scale(0.98);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
         }
-        .chat-bubble { animation: slideInUp 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
+
+        .chat-bubble {
+            animation: slideInUp 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
 
         @keyframes toolScaleIn {
-            from { opacity: 0; transform: scale(0.95); }
-            to   { opacity: 1; transform: scale(1); }
+            from {
+                opacity: 0;
+                transform: scale(0.95);
+            }
+
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
         }
-        .tool-block-enter { animation: toolScaleIn 0.3s ease-out; }
+
+        .tool-block-enter {
+            animation: toolScaleIn 0.3s ease-out;
+        }
 
         #panel {
             background: rgba(255, 255, 255, 0.08);
@@ -70,8 +99,14 @@
             border-right: 1px solid rgba(255, 255, 255, 0.15);
         }
 
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
         .custom-scrollbar::-webkit-scrollbar-thumb {
             background: rgba(255, 255, 255, 0.3);
             border-radius: 2px;
@@ -84,105 +119,206 @@
         }
 
         .status-dot {
-            width: 8px; height: 8px;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
             animation: pulse-dot 2s infinite;
         }
+
         @keyframes pulse-dot {
-            0%, 100% { opacity: 1; }
-            50%       { opacity: 0.4; }
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.4;
+            }
         }
 
         /* Markdown */
-        .md-body h1, .md-body h2, .md-body h3 { font-weight: 700; margin: 0.5em 0 0.25em; line-height: 1.3; }
-        .md-body h1 { font-size: 1.1em; }
-        .md-body h2 { font-size: 1.0em; }
-        .md-body h3 { font-size: 0.95em; color: inherit; opacity: 0.9; }
-        .md-body p  { margin: 0.35em 0; line-height: 1.6; }
-        .md-body ul, .md-body ol { margin: 0.35em 0 0.35em 1.2em; }
-        .md-body li { margin: 0.15em 0; }
-        .md-body strong { font-weight: 700; }
-        .md-body em { font-style: italic; }
-        .md-body hr { border: none; border-top: 1px solid rgba(0,0,0,0.15); margin: 0.5em 0; }
+        .md-body h1,
+        .md-body h2,
+        .md-body h3 {
+            font-weight: 700;
+            margin: 0.5em 0 0.25em;
+            line-height: 1.3;
+        }
+
+        .md-body h1 {
+            font-size: 1.1em;
+        }
+
+        .md-body h2 {
+            font-size: 1.0em;
+        }
+
+        .md-body h3 {
+            font-size: 0.95em;
+            color: inherit;
+            opacity: 0.9;
+        }
+
+        .md-body p {
+            margin: 0.35em 0;
+            line-height: 1.6;
+        }
+
+        .md-body ul,
+        .md-body ol {
+            margin: 0.35em 0 0.35em 1.2em;
+        }
+
+        .md-body li {
+            margin: 0.15em 0;
+        }
+
+        .md-body strong {
+            font-weight: 700;
+        }
+
+        .md-body em {
+            font-style: italic;
+        }
+
+        .md-body hr {
+            border: none;
+            border-top: 1px solid rgba(0, 0, 0, 0.15);
+            margin: 0.5em 0;
+        }
+
         .md-body code {
             font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
             font-size: 0.82em;
-            background: rgba(0,0,0,0.1);
+            background: rgba(0, 0, 0, 0.1);
             padding: 0.1em 0.35em;
             border-radius: 4px;
         }
+
         .md-body pre {
-            background: rgba(0,0,0,0.15);
+            background: rgba(0, 0, 0, 0.15);
             border-radius: 8px;
             padding: 0.75em 1em;
             overflow-x: auto;
             margin: 0.4em 0;
         }
-        .md-body pre code { background: none; padding: 0; font-size: 0.8em; }
+
+        .md-body pre code {
+            background: none;
+            padding: 0;
+            font-size: 0.8em;
+        }
+
         .md-body blockquote {
-            border-left: 3px solid rgba(255,255,255,0.4);
+            border-left: 3px solid rgba(255, 255, 255, 0.4);
             padding-left: 0.75em;
             margin: 0.35em 0;
             opacity: 0.8;
         }
-        .bg-white\/85 .md-body code      { background: rgba(0,0,0,0.07); }
-        .bg-white\/85 .md-body pre       { background: rgba(0,0,0,0.07); }
-        .bg-white\/85 .md-body blockquote { border-color: rgba(0,0,0,0.3); }
+
+        .bg-white\/85 .md-body code {
+            background: rgba(0, 0, 0, 0.07);
+        }
+
+        .bg-white\/85 .md-body pre {
+            background: rgba(0, 0, 0, 0.07);
+        }
+
+        .bg-white\/85 .md-body blockquote {
+            border-color: rgba(0, 0, 0, 0.3);
+        }
 
         /* VRM glow */
         .vrm-bg-glow {
-            pointer-events: none; will-change: transform;
-            position: absolute; top: 50%; left: 50%;
+            pointer-events: none;
+            will-change: transform;
+            position: absolute;
+            top: 50%;
+            left: 50%;
             transform: translate(-50%, -50%) scale(1.5);
-            width: 80%; height: 60%; opacity: 0.18;
+            width: 80%;
+            height: 60%;
+            opacity: 0.18;
             background: linear-gradient(135deg, #a855f7 0%, #3b82f6 30%, #ef4444 70%, #22d3ee 100%);
             background-size: 200% 200%;
             filter: blur(100px);
             animation: vrm-glow 15s ease infinite;
             z-index: -1;
         }
+
         @keyframes vrm-glow {
-            0%   { background-position: 0% 50%;   transform: translate(-50%,-50%) scale(1.4); }
-            50%  { background-position: 100% 50%; transform: translate(-50%,-50%) scale(1.7); }
-            100% { background-position: 0% 50%;   transform: translate(-50%,-50%) scale(1.4); }
+            0% {
+                background-position: 0% 50%;
+                transform: translate(-50%, -50%) scale(1.4);
+            }
+
+            50% {
+                background-position: 100% 50%;
+                transform: translate(-50%, -50%) scale(1.7);
+            }
+
+            100% {
+                background-position: 0% 50%;
+                transform: translate(-50%, -50%) scale(1.4);
+            }
         }
 
         /* Chat area glows */
         .chat-bg-glow-1 {
-            pointer-events: none; position: absolute;
-            top: 20%; left: 10%; width: 400px; height: 400px;
-            background: radial-gradient(circle, rgba(168,85,247,0.15) 0%, rgba(59,130,246,0) 70%);
+            pointer-events: none;
+            position: absolute;
+            top: 20%;
+            left: 10%;
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(168, 85, 247, 0.15) 0%, rgba(59, 130, 246, 0) 70%);
             filter: blur(80px);
             animation: chat-glow 15s ease-in-out infinite alternate;
             z-index: -1;
         }
+
         .chat-bg-glow-2 {
-            pointer-events: none; position: absolute;
-            bottom: 15%; right: 20%; width: 350px; height: 350px;
-            background: radial-gradient(circle, rgba(34,211,238,0.15) 0%, rgba(59,130,246,0) 70%);
+            pointer-events: none;
+            position: absolute;
+            bottom: 15%;
+            right: 20%;
+            width: 350px;
+            height: 350px;
+            background: radial-gradient(circle, rgba(34, 211, 238, 0.15) 0%, rgba(59, 130, 246, 0) 70%);
             filter: blur(70px);
             animation: chat-glow 12s ease-in-out infinite alternate-reverse;
             z-index: -1;
         }
+
         @keyframes chat-glow {
-            0%   { transform: scale(1) translate(0,0);       opacity: 0.5; }
-            100% { transform: scale(1.3) translate(20px,-20px); opacity: 0.8; }
+            0% {
+                transform: scale(1) translate(0, 0);
+                opacity: 0.5;
+            }
+
+            100% {
+                transform: scale(1.3) translate(20px, -20px);
+                opacity: 0.8;
+            }
         }
 
         /* Enhanced glassmorphism overrides */
         #sidebar {
-            background: rgba(15,23,42,0.4) !important;
+            background: rgba(15, 23, 42, 0.4) !important;
             backdrop-filter: blur(25px) !important;
-            border-right: 1px solid rgba(255,255,255,0.08) !important;
+            border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
         }
+
         #panel {
-            background: rgba(15,23,42,0.2) !important;
+            background: rgba(15, 23, 42, 0.2) !important;
             backdrop-filter: blur(30px) !important;
-            border-right: 1px solid rgba(255,255,255,0.05) !important;
+            border-right: 1px solid rgba(255, 255, 255, 0.05) !important;
         }
+
         #chat-input-area {
-            background: rgba(255,255,255,0.05) !important;
-            border: 1px solid rgba(255,255,255,0.1) !important;
+            background: rgba(255, 255, 255, 0.05) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
             backdrop-filter: blur(15px) !important;
         }
     </style>
@@ -194,6 +330,10 @@
     <div id="canvas-container" class="absolute inset-y-0 right-0 z-0 overflow-hidden" style="width: 35%">
         <div class="vrm-bg-glow"></div>
         <canvas id="vrm-canvas" class="w-full h-full relative z-10"></canvas>
+        <div id="vrm-load-error" style="display:none; position:absolute; bottom:12px; left:50%; transform:translateX(-50%);
+                   background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4);
+                   color:#fca5a5; font-size:11px; padding:6px 12px; border-radius:8px;
+                   max-width:90%; text-align:center; z-index:20;"></div>
     </div>
 
     <!-- Main Layout (left 65%) -->
@@ -211,6 +351,8 @@
             {% include 'panels/panel_history.html' %}
             {% include 'panels/panel_diary.html' %}
             {% include 'panels/panel_persona.html' %}
+            {% include 'panels/panel_skills.html' %}
+            {% include 'panels/panel_scheduler.html' %}
             {% include 'panels/panel_config.html' %}
             {% include 'panels/panel_store.html' %}
             {% include 'panels/panel_debug.html' %}
@@ -262,7 +404,7 @@
                 });
             });
             chain.then(function () { console.log('[App] All 3D modules loaded.'); })
-                 .catch(function (err) { console.error('[App] 3D load error:', err); });
+                .catch(function (err) { console.error('[App] 3D load error:', err); });
         }
         if (window.THREE) {
             loadVRMScripts();
@@ -272,4 +414,5 @@
     </script>
 
 </body>
+
 </html>

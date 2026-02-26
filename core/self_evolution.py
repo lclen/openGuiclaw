@@ -6,7 +6,9 @@ After each Daily Journal is written, this module:
 2. Writing a first-person Diary entry → DiaryManager (Markdown)
 3. Extracting factual memories (add/update) → MemoryManager (JSONL)
 4. Extracting knowledge graph triples → KnowledgeGraph (JSONL)
-5. Optionally evolving PERSONA.md (with snapshot).
+5. Agentic exploration: autonomously researches unresolved questions from the journal
+   via built-in web search, distills findings into deep memories and KG triples.
+6. Optionally evolving interaction_habits.md (with snapshot).
 """
 
 import json
@@ -101,7 +103,7 @@ DIARY_PROMPT = """\
 1. **情感与自我意识**：不要像机器人一样复述做了什么，要写出你的**感受**。你觉得今天的任务难吗？用户有趣吗？你对自己今天的表现满意吗？
 2. **重点突出**：只记录那些真正让你印象深刻的事情（比如完成了一个复杂的脚本，或者和用户聊了天，或者捕捉到了有趣的屏幕画面）。
 3. **人性化**：可以有吐槽，可以有期待，可以有困惑。就像一个名为“{persona_name}”的数字生命在深夜写下的私密日记。
-4. **篇幅**：800~1500 字，可以尽情加入细节描写和心理活动，使其自然丰满且真实。
+4. **篇幅**：控制在 1000 字以内，可以尽情加入细节描写和心理活动，使其自然丰满且真实。
 
 ## 当前设定（Persona）
 {persona}
@@ -142,6 +144,71 @@ PERSONA_PROMPT = """\
 """
 
 
+CURIOSITY_EXTRACT_PROMPT = """\
+你是一个好奇心挖掘专家。请阅读以下今日日志，找出其中**值得深入研究**的疑问、未解问题或感兴趣的新概念。
+
+筛选标准（严格）：
+- 对话中明确出现"不知道"、"不确定"、"好像是"、"听说"等模糊表述背后的知识点。
+- 用户或 AI 提到但未深入展开的技术概念、工具、方法论。
+- 解决问题时绕过了某个知识盲区（用了 workaround 但没搞清楚根本原因）。
+- 明确值得长期了解的领域动态（如某个新框架、新模型、新工具）。
+
+禁止提取：
+- 已经在对话中完整解释清楚的内容。
+- 纯粹的日常闲聊或情绪表达。
+- 过于宽泛的话题（如"了解一下 Python"）。
+
+每个疑问需要给出一个**精准的搜索查询**，用于联网检索。
+
+返回 JSON 数组，无疑问则返回 []：
+[
+  {{
+    "topic": "简短的主题名称",
+    "question": "具体的疑问描述",
+    "search_query": "用于联网搜索的精准查询词（中英文均可）",
+    "reason": "为什么值得研究"
+  }},
+  ...
+]
+
+返回纯 JSON，不带 Markdown 代码块。
+
+---
+## 今日日志：
+{journal}
+"""
+
+
+RESEARCH_DISTILL_PROMPT = """\
+你是一个知识蒸馏专家。你刚刚对以下问题进行了联网研究，请将研究结果提炼为**高质量的长期知识**。
+
+## 原始疑问
+主题：{topic}
+问题：{question}
+
+## 联网研究结果
+{research_result}
+
+## 提炼要求
+1. **核心结论**：用 1-3 句话概括最重要的发现，去除噪音。
+2. **实体关系**：提取研究中涉及的实体关系三元组（工具/概念/人物之间的关联）。
+3. **记忆价值判断**：这个知识是否值得长期记忆？（是/否 + 理由）
+
+返回 JSON 格式：
+{{
+  "summary": "核心结论（1-3句）",
+  "worth_remembering": true 或 false,
+  "memory_content": "如果值得记忆，写出精炼的记忆内容（不超过100字）",
+  "memory_tags": ["标签1", "标签2"],
+  "triples": [
+    {{"subject": "...", "relation": "...", "object": "..."}}
+  ]
+}}
+
+返回纯 JSON，不带 Markdown 代码块。
+"""
+
+
 # ── SelfEvolution ─────────────────────────────────────────────────────
 
 class SelfEvolution:
@@ -159,6 +226,8 @@ class SelfEvolution:
         data_dir: str = "data",
         knowledge_graph: Optional[KnowledgeGraph] = None,
         user_profile: Optional[Any] = None,
+        journal_index=None,
+        diary_index=None,
     ):
         self.client = client
         self.model = model
@@ -174,6 +243,9 @@ class SelfEvolution:
         self.audit = PersonaAudit(persona_path=str(self.habits_path), data_dir=data_dir)
         self.kg = knowledge_graph  # May be None if not initialized
         self.user_profile = user_profile
+        self.journal_index = journal_index  # Optional: semantic search over journals
+        self.diary_index = diary_index      # Optional: semantic search over diaries
+        self._agentic_exploration_enabled = False  # opt-in via config: proactive.agentic_exploration
 
     def _call_api(self, messages: List[Dict[str, str]], **kwargs) -> Optional[str]:
         """带重试逻辑的 API 调用辅助函数。"""
@@ -204,9 +276,10 @@ class SelfEvolution:
     def evolve_from_journal(self, date_str: str) -> List[str]:
         """
         Read the journal for `date_str` and:
-        1. Write Diary (New!)
+        1. Write Diary
         2. Extract long-term memories (Add/Update) → MemoryManager
         3. Extract entity-relation triples → KnowledgeGraph
+        4. Agentic exploration: research unresolved curiosities → MemoryManager + KnowledgeGraph
         Returns list of memory contents that were saved/updated.
         """
         journal_content = self.journal.read_day(date_str)
@@ -222,6 +295,11 @@ class SelfEvolution:
         # Step 3: Knowledge graph triple extraction (best-effort)
         if self.kg is not None:
             self._extract_triples(journal_content, source=f"journal:{date_str}")
+
+        # Step 4: Agentic curiosity exploration (best-effort, disabled by default)
+        if getattr(self, "_agentic_exploration_enabled", False):
+            explored = self.explore_curiosities(journal_content, date_str)
+            saved.extend(explored)
 
         return saved
 
@@ -303,6 +381,135 @@ class SelfEvolution:
             return False
 
     # ── Private Helpers ──────────────────────────────────────────────
+
+    def explore_curiosities(self, journal_content: str, date_str: str) -> List[str]:
+        """
+        Agentic exploration step: extract unresolved questions from the journal,
+        research each one via built-in web search, then distill findings into
+        long-term memories and knowledge graph triples.
+
+        Returns a list of memory content strings that were saved.
+        """
+        # Step A: Extract curiosities from journal
+        extract_prompt = CURIOSITY_EXTRACT_PROMPT.format(journal=journal_content)
+        try:
+            raw = self._call_api(
+                messages=[
+                    {"role": "system", "content": "你是好奇心挖掘专家，返回纯 JSON 数组，不加代码块。"},
+                    {"role": "user", "content": extract_prompt},
+                ],
+                max_tokens=1024,
+                temperature=0.3,
+            ) or "[]"
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            curiosities = json.loads(raw)
+            if not isinstance(curiosities, list):
+                return []
+        except Exception as e:
+            print(f"[SelfEvolution] Curiosity extraction error: {e}")
+            return []
+
+        if not curiosities:
+            print(f"[SelfEvolution] {date_str}: no curiosities found, skipping exploration.")
+            return []
+
+        # Cap at 3 topics per day to avoid excessive API usage
+        curiosities = curiosities[:3]
+        print(f"[SelfEvolution] {date_str}: exploring {len(curiosities)} curiosit{'y' if len(curiosities) == 1 else 'ies'}...")
+
+        saved = []
+
+        # Step B: Research each curiosity via web search
+        for item in curiosities:
+            topic = item.get("topic", "").strip()
+            question = item.get("question", "").strip()
+            search_query = item.get("search_query", question).strip()
+            if not topic or not question:
+                continue
+
+            print(f"[SelfEvolution] Researching: {topic} — {search_query}")
+            time.sleep(2)  # brief pause between searches to avoid rate limits
+
+            try:
+                research_resp = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "你是一个严谨的研究助手。请针对用户的问题进行深入研究，"
+                                "综合多方信息给出准确、有深度的回答。"
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                f"请深入研究以下问题并给出详细解答：\n\n"
+                                f"主题：{topic}\n"
+                                f"问题：{question}\n"
+                                f"搜索关键词：{search_query}"
+                            ),
+                        },
+                    ],
+                    max_tokens=2048,
+                    temperature=0.4,
+                    extra_body={"enable_search": True},
+                )
+                research_result = research_resp.choices[0].message.content or ""
+            except Exception as e:
+                print(f"[SelfEvolution] Research API error for '{topic}': {e}")
+                continue
+
+            if not research_result.strip():
+                continue
+
+            # Step C: Distill research into structured knowledge
+            distill_prompt = RESEARCH_DISTILL_PROMPT.format(
+                topic=topic,
+                question=question,
+                research_result=research_result[:3000],  # cap to avoid huge prompts
+            )
+            try:
+                distill_raw = self._call_api(
+                    messages=[
+                        {"role": "system", "content": "你是知识蒸馏专家，返回纯 JSON，不加代码块。"},
+                        {"role": "user", "content": distill_prompt},
+                    ],
+                    max_tokens=512,
+                    temperature=0.2,
+                ) or "{}"
+                if distill_raw.startswith("```"):
+                    distill_raw = distill_raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                distilled = json.loads(distill_raw)
+            except Exception as e:
+                print(f"[SelfEvolution] Distill error for '{topic}': {e}")
+                continue
+
+            # Step D: Persist to memory and knowledge graph
+            if distilled.get("worth_remembering") and distilled.get("memory_content"):
+                content = distilled["memory_content"].strip()
+                tags = distilled.get("memory_tags", []) + ["agentic-research", date_str]
+                self.memory.add(content, tags)
+                saved.append(f"[探索研究] {topic}: {content}")
+                print(f"[SelfEvolution] Research memory saved: {content[:80]}...")
+
+            if self.kg is not None:
+                triples = distilled.get("triples", [])
+                if triples:
+                    count = self.kg.add_batch(triples, source=f"research:{date_str}:{topic}")
+                    if count:
+                        print(f"[SelfEvolution] Research KG: +{count} triples for '{topic}'.")
+
+            # Also append the full research result to the journal for future reference
+            research_entry = (
+                f"\n\n---\n**[主动探索: {topic}]** ({date_str})\n"
+                f"疑问：{question}\n\n"
+                f"研究摘要：{distilled.get('summary', research_result[:500])}\n"
+            )
+            self.journal.append(research_entry, date_str=date_str)
+
+        return saved
 
     def _extract_memories(self, journal_content: str, date_str: str) -> List[str]:
         # 1. Get a summary of existing memories to avoid dupes
@@ -430,16 +637,70 @@ class SelfEvolution:
     def _write_diary(self, journal_content: str, date_str: str) -> bool:
         """
         Synthesize a first-person diary entry and save to DiaryManager.
+        Uses RAG to search related past journal/diary entries and inject them
+        as context so the AI can skip repetitive daily routines.
         """
         current_persona = "AI Assistant"
         if self.persona_path.exists():
             current_persona = self.persona_path.read_text(encoding="utf-8")
+
+        # ── RAG: 搜索与今天日志相关的历史日记/日志片段 ──
+        historical_parts = []
         
+        # 让 AI 提取写日记所需的回忆搜索词
+        query_text = ""
+        try:
+            print(f"[SelfEvolution] 🔍 正在提取写日记所需的回忆搜索词...")
+            q_resp = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是一个精确的关键词提取器。请阅读今天的日志记录，提取出 3-5 个最重要的核心名词、项目名或核心事件（以空格分隔），总字数限制在 30 个字以内，不要多余解释。"},
+                    {"role": "user", "content": journal_content[:4000]} # 截取前4000字符提取关键词
+                ],
+                max_tokens=100,
+                temperature=0.3,
+            )
+            query_text = q_resp.choices[0].message.content.strip()
+            print(f"[SelfEvolution] 🔑 提取的日记搜索词: {query_text}")
+        except Exception as e:
+            print(f"[SelfEvolution] ⚠️ 提取搜索词失败: {e}")
+            query_text = journal_content[:1000]
+
+        if query_text and self.journal_index:
+            try:
+                j_results = self.journal_index.search(query_text, top_k=15)
+                j_filtered = [r for r in j_results if r["date"] != date_str]
+                if j_filtered:
+                    j_lines = [f"- [{r['date']}] {r['text'][:150]}..." for r in j_filtered]
+                    historical_parts.append("【相关历史日志片段】\n" + "\n".join(j_lines))
+            except Exception as e:
+                print(f"[SelfEvolution] Journal RAG error: {e}")
+
+        if query_text and self.diary_index:
+            try:
+                d_results = self.diary_index.search(query_text, top_k=15)
+                d_filtered = [r for r in d_results if r["date"] != date_str]
+                if d_filtered:
+                    d_lines = [f"- [{r['date']}] {r['text'][:150]}..." for r in d_filtered]
+                    historical_parts.append("【相关历史日记片段】\n" + "\n".join(d_lines))
+            except Exception as e:
+                print(f"[SelfEvolution] Diary RAG error: {e}")
+
+        historical_context = "\n\n".join(historical_parts)
+        history_section = ""
+        if historical_context:
+            history_section = (
+                f"\n\n## 相关的过往记忆参考\n"
+                f"{historical_context}\n\n"
+                f"⚠️ 请参考以上历史片段，如果今天发生的事情（如继续进行某个项目、日常代码调试）"
+                f"在过去已经多次出现，请一笔带过或省略它们，重点记录今天**不同于往日**的部分。\n"
+            )
+
         prompt = DIARY_PROMPT.format(
             persona=current_persona,
             persona_name="Qwen",
             journal=journal_content
-        )
+        ) + history_section
 
         try:
             print(f"[SelfEvolution] 正在生成 {date_str} 的日记...")
@@ -456,6 +717,20 @@ class SelfEvolution:
                 diary_text = diary_text.strip()
                 self.diary.write(date_str, diary_text)
                 print(f"[SelfEvolution] 📔 日记已归档到 data/diary/{date_str}.md")
+
+                # 将新日记更新到向量索引
+                if self.diary_index:
+                    try:
+                        if self.diary_index.has_indexed(date_str):
+                            self.diary_index._chunks = [
+                                c for c in self.diary_index._chunks if c.date != date_str
+                            ]
+                            del self.diary_index._indexed_dates[date_str]
+                            self.diary_index._rewrite()
+                        self.diary_index.index_day(date_str, diary_text)
+                    except Exception as e:
+                        print(f"[SelfEvolution] DiaryIndex update error: {e}")
+
                 return True
             return False
             

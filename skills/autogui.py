@@ -20,6 +20,29 @@ from pathlib import Path
 from core.skills import SkillManager
 
 
+def _capture_screen_to_file(save_dir: str = "data/screenshots") -> tuple[str, str]:
+    """Capture screen and save to file, return (file_path, url_path)."""
+    from datetime import datetime
+    
+    # Create screenshots directory if it doesn't exist
+    Path(save_dir).mkdir(parents=True, exist_ok=True)
+    
+    # Generate filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # milliseconds
+    filename = f"screenshot_{timestamp}.png"
+    filepath = Path(save_dir) / filename
+    
+    # Capture and save
+    with mss.mss() as sct:
+        monitor = sct.monitors[1]
+        screenshot = sct.grab(monitor)
+        mss.tools.to_png(screenshot.rgb, screenshot.size, output=str(filepath))
+    
+    # Return both file path and URL path
+    url_path = f"/screenshots/{filename}"
+    return str(filepath), url_path
+
+
 def _capture_screen() -> str:
     """Capture screen and return base64-encoded PNG."""
     with mss.mss() as sct:
@@ -249,11 +272,12 @@ def register(manager: SkillManager) -> None:
 
     @manager.skill(
         name="get_screenshot",
-        description="截取当前屏幕，返回 base64 编码的图像（约1MB+，仅在需要视觉分析时调用）。",
+        description="截取当前屏幕并保存为文件，返回本地访问 URL。图片保存在 data/screenshots/ 目录下，保持原始清晰度。",
         parameters={"properties": {}, "required": []},
         category="autogui",
     )
     def get_screenshot() -> str:
-        b64 = _capture_screen()
-        return f"data:image/png;base64,{b64}"
+        filepath, url_path = _capture_screen_to_file()
+        # Return URL that can be accessed via the web server
+        return f"截图已保存: {filepath}\n访问链接: http://localhost:8000{url_path}"
 
