@@ -1,10 +1,11 @@
 """
-Persona Audit: Snapshot and rollback system for PERSONA.md.
+Persona Audit: Snapshot and rollback system for identity files.
 
-Every time PERSONA.md is about to be modified by SelfEvolution,
-a timestamped snapshot is saved to data/persona_snapshots/.
+Snapshots are saved to data/identity/snapshots/.
+Auto-migrates from legacy data/persona_snapshots/ on first use.
 """
 
+import shutil
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -14,7 +15,7 @@ class PersonaSnapshot:
     """Metadata for a single persona snapshot."""
     def __init__(self, path: Path):
         self.path = path
-        self.filename = path.name          # e.g. 2026-02-19_22-30-00.md
+        self.filename = path.name
         self.timestamp = path.stem.replace("_", " ").replace("-", ":", 2)
         self.lines = len(path.read_text(encoding="utf-8").splitlines())
 
@@ -24,27 +25,34 @@ class PersonaSnapshot:
 
 class PersonaAudit:
     """
-    Manages PERSONA.md snapshots for audit and rollback.
+    Manages identity file snapshots for audit and rollback.
 
     Usage:
-        audit = PersonaAudit(persona_path="PERSONA.md", data_dir="data")
+        audit = PersonaAudit(persona_path="data/identity/HABITS.md", data_dir="data")
         audit.snapshot()          # Save current state before modification
         snaps = audit.list()      # List all snapshots
         audit.diff(0)             # Diff latest vs snapshot #0
-        audit.rollback(0)         # Restore snapshot #0 to PERSONA.md
+        audit.rollback(0)         # Restore snapshot #0
     """
 
     def __init__(self, persona_path: str = "PERSONA.md", data_dir: str = "data"):
         self.persona_path = Path(persona_path)
-        self.snapshot_dir = Path(data_dir) / "persona_snapshots"
+        self.snapshot_dir = Path(data_dir) / "identity" / "snapshots"
         self.snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+        # Auto-migrate from legacy persona_snapshots/ if new dir is empty
+        legacy_dir = Path(data_dir) / "persona_snapshots"
+        if legacy_dir.exists() and not any(self.snapshot_dir.glob("*.md")):
+            for f in legacy_dir.glob("*.md"):
+                shutil.copy2(f, self.snapshot_dir / f.name)
+            print(f"[PersonaAudit] 已迁移快照: {legacy_dir} → {self.snapshot_dir}")
 
     # ── Public API ──────────────────────────────────────────────────
 
-    def snapshot(self, reason: str = "") -> Optional[Path]:
+    def snapshot(self, reason: str = "", target_file: str = "HABITS.md") -> Optional[Path]:
         """
-        Save a snapshot of the current PERSONA.md.
-        Returns the path of the snapshot file, or None if PERSONA.md not found.
+        Save a snapshot of the current persona/identity file.
+        Returns the path of the snapshot file, or None if source not found.
         """
         if not self.persona_path.exists():
             return None
@@ -53,10 +61,7 @@ class PersonaAudit:
         dest = self.snapshot_dir / f"{ts}.md"
 
         content = self.persona_path.read_text(encoding="utf-8")
-        header = f"<!-- Snapshot: {ts}"
-        if reason:
-            header += f" | Reason: {reason}"
-        header += " -->\n"
+        header = f"<!-- Snapshot: {ts} | Target: {target_file} | Reason: {reason} -->\n"
         dest.write_text(header + content, encoding="utf-8")
         return dest
 
@@ -67,7 +72,7 @@ class PersonaAudit:
 
     def diff(self, idx: int) -> str:
         """
-        Show line-level diff between the current PERSONA.md and snapshot[idx].
+        Show line-level diff between the current file and snapshot[idx].
         Returns a formatted string showing added (+) and removed (-) lines.
         """
         snaps = self.list()
@@ -97,7 +102,7 @@ class PersonaAudit:
 
     def rollback(self, idx: int) -> bool:
         """
-        Restore PERSONA.md to snapshot[idx].
+        Restore the persona file to snapshot[idx].
         Returns True on success.
         """
         snaps = self.list()
@@ -108,7 +113,6 @@ class PersonaAudit:
         snap = snaps[idx]
         content = _strip_header(snap.path.read_text(encoding="utf-8"))
 
-        # Backup the current state before overwriting
         self.snapshot(reason=f"before rollback to {snap.filename}")
         self.persona_path.write_text(content, encoding="utf-8")
         print(f"[PersonaAudit] ✅ 已回滚到快照 #{idx}: {snap.filename}")

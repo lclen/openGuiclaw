@@ -23,6 +23,8 @@ from core.journal_index import JournalIndex
 from core.diary_index import DiaryIndex
 from core.knowledge_graph import KnowledgeGraph
 from core.user_profile import UserProfileManager
+from core.identity_manager import IdentityManager
+from core.daily_consolidator import DailyConsolidator
 import time
 import threading
 
@@ -174,8 +176,11 @@ class Agent:
 
         self.persona = self._load_persona(self.persona_path)
 
-        # Load global interaction habits
-        self.habits_path = Path(data_dir) / "interaction_habits.md"
+        # Identity Manager (新架构：管理 USER.md / HABITS.md / MEMORY.md)
+        self.identity = IdentityManager(data_dir)
+        
+        # Load global interaction habits (优先从 identity 读取)
+        self.habits_path = self.identity.habits_path
         self._load_habits()
 
         # Vector memory (semantic search) — optional but enabled by default from config
@@ -221,8 +226,27 @@ class Agent:
         # New Feature: Knowledge Graph
         self.kg = KnowledgeGraph(data_dir)
 
+        # Memory Extractor (LLM-driven auto extraction)
+        from core.memory_extractor import MemoryExtractor
+        self.memory_extractor = MemoryExtractor(self.client, self.memory, self.model)
+        self._last_message_time: float = time.time()
+        self._last_extracted_session_id: str = ""
+        self._extracting_conversation: bool = False  # guard against concurrent extraction
+
         # New Feature: User Profile Manager
         self.user_profile = UserProfileManager(data_dir)
+        # 让 UserProfileManager 委托给 IdentityManager
+        self.user_profile.identity_manager = self.identity
+
+        # Daily Consolidator (每日归纳：摘要日志 → MEMORY.md，晋升记忆，去重)
+        self.daily_consolidator = DailyConsolidator(
+            client=self.client,
+            model=self.evolution_model,
+            identity=self.identity,
+            memory=self.memory,
+            journal=self.journal,
+            data_dir=data_dir,
+        )
 
         self.evolution = SelfEvolution(
             self.client, self.evolution_model, self.memory, self.journal,
@@ -232,6 +256,8 @@ class Agent:
             user_profile=self.user_profile,
             journal_index=self.journal_index,
             diary_index=self.diary_index,
+            identity=self.identity,
+            daily_consolidator=self.daily_consolidator,
         )
         self.evolution._agentic_exploration_enabled = (
             self.config.get("proactive", {}).get("agentic_exploration", False)
@@ -243,14 +269,13 @@ class Agent:
         self.context = None  # type: Optional[Any]
         self.event_queue = None # type: Optional[Any] (set by lifespan in server.py)
 
-        # Token usage statistics
-        self.token_stats = {
-            "total_prompt_tokens": 0,
-            "total_completion_tokens": 0,
-            "total_tokens": 0,
-            "request_count": 0,
-            "by_model": {},  # model -> {prompt, completion, total, count}
-        }
+        # Token usage statistics — persisted to data/token_usage.db (SQLite)
+        self._token_stats_path = Path(data_dir) / "token_stats.json"  # legacy, kept for compat
+        self._token_db_path = str(Path(data_dir) / "token_usage.db")
+        self._token_db_lock = threading.Lock()
+        self._init_token_db()
+        # In-memory totals (rebuilt from DB on startup for the summary cards)
+        self.token_stats = self._load_token_stats()
           # Start built-in background tasks ONLY if auto_evolve is True
         self.last_interaction_date = time.strftime("%Y-%m-%d")
         # Background tasks should be started manually via `start_background_tasks()` 
@@ -264,6 +289,7 @@ class Agent:
         
         # Register built-in skills
         self._register_builtins()
+        self._build_builtin_skills()
 
         # Backfill vector embeddings for existing memories (background thread)
         if self._embedding_client and self._vector_store:
@@ -271,13 +297,112 @@ class Agent:
                 target=self._backfill_vectors, daemon=True, name="VectorBackfill"
             ).start()
 
+    def _init_token_db(self) -> None:
+        """Create token_usage table if not exists."""
+        import sqlite3
+        try:
+            with sqlite3.connect(self._token_db_path) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.executescript("""
+                    CREATE TABLE IF NOT EXISTS token_usage (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')),
+                        model TEXT,
+                        prompt_tokens INTEGER DEFAULT 0,
+                        completion_tokens INTEGER DEFAULT 0,
+                        total_tokens INTEGER DEFAULT 0
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_ts ON token_usage(timestamp);
+                    CREATE INDEX IF NOT EXISTS idx_model ON token_usage(model);
+                """)
+                # One-time migration: fix old UTC timestamps to local time.
+                # Check if migration has already been done.
+                meta_exists = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='token_meta'"
+                ).fetchone()
+                if not meta_exists:
+                    conn.execute("CREATE TABLE token_meta (key TEXT PRIMARY KEY, value TEXT)")
+                
+                migrated = conn.execute("SELECT value FROM token_meta WHERE key='tz_migrated'").fetchone()
+                if not migrated:
+                    import time as _time
+                    from datetime import datetime, timezone
+                    # Calculate offset: compare local now vs UTC now
+                    local_now = datetime.now()
+                    utc_now = datetime.now(timezone.utc).replace(tzinfo=None)
+                    offset_seconds = (local_now - utc_now).total_seconds()
+                    offset_hours = offset_seconds / 3600
+                    
+                    if abs(offset_hours) > 0.1:  # Only migrate if offset > 6 minutes
+                        conn.execute(
+                            "UPDATE token_usage SET timestamp = strftime('%Y-%m-%d %H:%M:%S', timestamp, ? || ' hours')",
+                            (f"{offset_hours:+.1f}",),
+                        )
+                        print(f"  [INFO] Token DB 时区迁移完成: UTC{offset_hours:+.1f}h")
+                    conn.execute("INSERT OR REPLACE INTO token_meta VALUES ('tz_migrated', '1')")
+        except Exception as e:
+            print(f"  [WARN] token DB 初始化失败: {e}")
+
+    def _load_token_stats(self) -> dict:
+        """Rebuild in-memory totals from DB (all-time). Falls back to legacy JSON."""
+        import sqlite3
+        defaults = {
+            "total_prompt_tokens": 0,
+            "total_completion_tokens": 0,
+            "total_tokens": 0,
+            "request_count": 0,
+            "by_model": {},
+        }
+        try:
+            with sqlite3.connect(self._token_db_path) as conn:
+                rows = conn.execute(
+                    "SELECT model, SUM(prompt_tokens), SUM(completion_tokens), SUM(total_tokens), COUNT(*) "
+                    "FROM token_usage GROUP BY model"
+                ).fetchall()
+                for model, p, c, t, cnt in rows:
+                    defaults["total_prompt_tokens"] += p or 0
+                    defaults["total_completion_tokens"] += c or 0
+                    defaults["total_tokens"] += t or 0
+                    defaults["request_count"] += cnt or 0
+                    defaults["by_model"][model] = {
+                        "prompt": p or 0, "completion": c or 0,
+                        "total": t or 0, "count": cnt or 0,
+                    }
+        except Exception:
+            # Fallback: try legacy JSON
+            try:
+                if self._token_stats_path.exists():
+                    with open(self._token_stats_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    defaults.update(data)
+            except Exception:
+                pass
+        return defaults
+
+    def _save_token_stats(self) -> None:
+        """No-op: stats are now written per-request to SQLite."""
+        pass
+
     def _record_usage(self, usage, model: str) -> None:
-        """Accumulate token usage from an API response."""
+        """Accumulate token usage: write to SQLite + update in-memory totals."""
         if usage is None:
             return
+        import sqlite3
         p = getattr(usage, "prompt_tokens", 0) or 0
         c = getattr(usage, "completion_tokens", 0) or 0
         t = getattr(usage, "total_tokens", 0) or (p + c)
+        # Write to DB (best-effort)
+        try:
+            with self._token_db_lock:
+                with sqlite3.connect(self._token_db_path) as conn:
+                    conn.execute(
+                        "INSERT INTO token_usage (model, prompt_tokens, completion_tokens, total_tokens) "
+                        "VALUES (?, ?, ?, ?)",
+                        (model, p, c, t),
+                    )
+        except Exception as e:
+            print(f"  [WARN] token DB 写入失败: {e}")
+        # Update in-memory totals
         self.token_stats["total_prompt_tokens"] += p
         self.token_stats["total_completion_tokens"] += c
         self.token_stats["total_tokens"] += t
@@ -376,12 +501,17 @@ class Agent:
         return "你是一个有帮助的 AI 助理。"
     
     def _load_habits(self) -> None:
+        # 优先从 IdentityManager 读取（新架构）
+        if hasattr(self, "identity") and self.identity is not None:
+            self.interaction_habits = self.identity.get_habits()
+            return
+        # 回退：直接读旧文件
         if not self.habits_path.exists():
             self.interaction_habits = ""
             return
         mtime = self.habits_path.stat().st_mtime
         if mtime == getattr(self, "_habits_mtime", None):
-            return  # file unchanged, skip disk read
+            return
         self.interaction_habits = self.habits_path.read_text(encoding="utf-8")
         self._habits_mtime = mtime
     
@@ -891,8 +1021,11 @@ class Agent:
         if self.interaction_habits.strip():
             parts.append(f"# 全局交往习惯与规则 (Interaction Habits)\n{self.interaction_habits}")
 
-        # Inject User Profile
-        profile_ctx = self.user_profile.build_prompt()
+        # 注入用户档案（优先走 IdentityManager，回退到 UserProfileManager）
+        if hasattr(self, "identity") and self.identity is not None:
+            profile_ctx = self.identity.build_prompt()
+        else:
+            profile_ctx = self.user_profile.build_prompt()
         if profile_ctx:
             parts.append(profile_ctx)
 
@@ -1109,6 +1242,40 @@ class Agent:
             session.add_message("user", user_input)
             self.sessions.save()
 
+        # --- Checkpoint/Rollback state ---
+        import copy
+        _checkpoints: list = []          # list of (messages_snapshot, tool_names, round_idx)
+        _tool_fail_counter: dict = {}    # tool_name -> consecutive failure count
+        _rollback_count = 0
+        _MAX_CHECKPOINTS = 5
+        _MAX_ROLLBACKS = 2
+        _CONSEC_FAIL_THRESHOLD = 3
+
+        def _save_checkpoint(msgs: list, tool_names: list, ridx: int) -> None:
+            _checkpoints.append((copy.deepcopy(msgs), list(tool_names), ridx))
+            if len(_checkpoints) > _MAX_CHECKPOINTS:
+                _checkpoints.pop(0)
+
+        def _try_rollback(reason: str) -> list | None:
+            """回滚到上一个检查点，附加失败经验提示。返回恢复的 messages 或 None。"""
+            nonlocal _rollback_count
+            if not _checkpoints or _rollback_count >= _MAX_ROLLBACKS:
+                return None
+            snap, tool_names, _ = _checkpoints.pop()
+            _rollback_count += 1
+            _tool_fail_counter.clear()
+            restored = copy.deepcopy(snap)
+            restored.append({
+                "role": "user",
+                "content": (
+                    f"[系统提示] 上一次方案失败了（原因: {reason}）。"
+                    f"失败的工具: {tool_names}。"
+                    "请尝试完全不同的方法来完成任务，避免重复使用相同的工具参数组合。"
+                ),
+            })
+            print(f"  [Rollback] 回滚到检查点，原因: {reason}，已回滚 {_rollback_count}/{_MAX_ROLLBACKS} 次")
+            return restored
+
         for _ in range(max_tool_rounds):
             response = self.client.chat.completions.create(
                 model=current_model,
@@ -1134,6 +1301,14 @@ class Agent:
                         json.loads(raw_args)
                     except (json.JSONDecodeError, TypeError):
                         tc_dict["function"]["arguments"] = "{}"
+
+                # Save checkpoint BEFORE appending assistant message (clean snapshot)
+                tool_names_this_round = [
+                    tc.get("function", {}).get("name", "unknown")
+                    for tc in (assistant_dict.get("tool_calls") or [])
+                ]
+                _save_checkpoint(messages, tool_names_this_round, _)
+
                 messages.append(assistant_dict)
                 # Persist intermediate assistant message (with tool_calls) to session
                 session.add_message(
@@ -1146,6 +1321,7 @@ class Agent:
 
                 # Execute each tool call
                 round_had_error = False
+                batch_results: list[bool] = []  # True=success, False=error per tool
                 for tc in msg.tool_calls:
                     name = tc.function.name
                     try:
@@ -1159,13 +1335,28 @@ class Agent:
 
                     import asyncio
                     try:
-                        result = asyncio.run(self.skills.execute(name, params))
+                        try:
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                # Already inside an event loop (e.g. some test runners) — use a new thread
+                                import concurrent.futures
+                                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                                    result = pool.submit(asyncio.run, self.skills.execute(name, params)).result()
+                            else:
+                                result = loop.run_until_complete(self.skills.execute(name, params))
+                        except RuntimeError:
+                            result = asyncio.run(self.skills.execute(name, params))
                     except Exception as e:
                         result = f"❌ 执行出错: {e}"
 
                     # Ensure result is a plain string and not excessively long
                     if not isinstance(result, str):
                         result = str(result)
+
+                    # Guard: truncate oversized tool results to avoid context overflow
+                    _MAX_TOOL_RESULT = 12000
+                    if len(result) > _MAX_TOOL_RESULT:
+                        result = result[:_MAX_TOOL_RESULT] + f"\n\n[输出已截断，共 {len(result)} 字符，仅显示前 {_MAX_TOOL_RESULT} 字符]"
                     
                     # Check for ask_user interrupt AFTER ensuring result is a string
                     is_ask_user_interrupt = (result == "__ASK_USER_INTERRUPT__")
@@ -1177,8 +1368,14 @@ class Agent:
                     
                     print(f"  [Result] {result[:120]}")
 
-                    if result.strip().startswith("❌") or "Traceback (most recent call last):" in result:
+                    is_error = result.strip().startswith("❌") or "Traceback (most recent call last):" in result
+                    if is_error:
                         round_had_error = True
+                        batch_results.append(False)
+                        _tool_fail_counter[name] = _tool_fail_counter.get(name, 0) + 1
+                    else:
+                        batch_results.append(True)
+                        _tool_fail_counter[name] = 0
 
                     tool_msg = {
                         "role": "tool",
@@ -1198,15 +1395,33 @@ class Agent:
                 if final_response == "（正在等待您做出选择...）":
                     break # Break from max_tool_rounds loop if ask_user was called
 
+                # --- Checkpoint/Rollback check ---
+                all_failed = bool(batch_results) and all(not s for s in batch_results)
+                consec_fail_tool = next(
+                    (t for t, c in _tool_fail_counter.items() if c >= _CONSEC_FAIL_THRESHOLD), None
+                )
+                rollback_reason = None
+                if all_failed:
+                    rollback_reason = "本轮所有工具调用均失败"
+                elif consec_fail_tool:
+                    rollback_reason = f"工具 '{consec_fail_tool}' 连续失败 {_tool_fail_counter[consec_fail_tool]} 次"
+
+                if rollback_reason:
+                    restored = _try_rollback(rollback_reason)
+                    if restored is not None:
+                        messages = restored
+                        consecutive_errors = 0
+                        continue
+                    else:
+                        # 回滚次数耗尽，硬中止
+                        print(f"  [System] ⚠️ 回滚次数耗尽，强行中止。原因: {rollback_reason}")
+                        final_response = f"⚠️ **执行中止**：{rollback_reason}，且已达到最大回滚次数。建议检查工具配置后重试。"
+                        break
+
                 if round_had_error:
                     consecutive_errors += 1
                 else:
                     consecutive_errors = 0
-                    
-                if consecutive_errors >= 3:
-                    print(f"  [System] ⚠️ 触发安全跳出：连错 {consecutive_errors} 次，强行中止 LLM 思考循环。")
-                    final_response = "⚠️ **执行安全中止**：检测到连续多次调用工具报错。为防止消耗过多 Token 或陷入死循环，已主动停止任务。建议您检查日志或调整指令后重试。"
-                    break
 
                 # Continue loop so LLM sees tool results
                 continue
@@ -1217,11 +1432,27 @@ class Agent:
 
         if final_response is None:
             final_response = "（已完成工具操作，无额外回复。）"
-        else:
-            # Final text response
+
+        # ask_user interrupt: don't persist the placeholder or extract memory
+        _is_ask_user_wait = (final_response == "（正在等待您做出选择...）")
+
+        if not _is_ask_user_wait:
+            # Only persist and extract for real final responses
             session.add_message("assistant", final_response)
-            
+
         self.sessions.save()
+
+        if not _is_ask_user_wait:
+            # Async memory extraction (non-blocking)
+            _user_msg = user_input if isinstance(user_input, str) else str(user_input)
+            _asst_msg = final_response or ""
+            self._last_message_time = time.time()
+            threading.Thread(
+                target=self.memory_extractor.extract_from_turn,
+                args=(_user_msg, _asst_msg),
+                daemon=True,
+                name="MemExtractTurn"
+            ).start()
 
         # Check triggers
         self._check_all_triggers()
@@ -1387,6 +1618,38 @@ class Agent:
         tool_errors_history = []
         full_assistant_content = ""
 
+        # --- Checkpoint/Rollback state ---
+        import copy as _copy
+        _checkpoints: list = []
+        _tool_fail_counter: dict = {}
+        _rollback_count = 0
+        _MAX_CHECKPOINTS = 5
+        _MAX_ROLLBACKS = 2
+        _CONSEC_FAIL_THRESHOLD = 3
+
+        def _save_checkpoint(msgs: list, tool_names: list) -> None:
+            _checkpoints.append((_copy.deepcopy(msgs), list(tool_names)))
+            if len(_checkpoints) > _MAX_CHECKPOINTS:
+                _checkpoints.pop(0)
+
+        def _try_rollback(reason: str) -> list | None:
+            nonlocal _rollback_count
+            if not _checkpoints or _rollback_count >= _MAX_ROLLBACKS:
+                return None
+            snap, tool_names = _checkpoints.pop()
+            _rollback_count += 1
+            _tool_fail_counter.clear()
+            restored = _copy.deepcopy(snap)
+            restored.append({
+                "role": "user",
+                "content": (
+                    f"[系统提示] 上一次方案失败了（原因: {reason}）。"
+                    f"失败的工具: {tool_names}。"
+                    "请尝试完全不同的方法来完成任务，避免重复使用相同的工具参数组合。"
+                ),
+            })
+            return restored
+
         for round_idx in range(max_tool_rounds):
             yield _yield_event({"type": "status", "content": "思考中..."})
             
@@ -1442,6 +1705,14 @@ class Agent:
                         json.loads(raw_args)
                     except (json.JSONDecodeError, TypeError):
                         tc_dict["function"]["arguments"] = "{}"
+
+                # Save checkpoint BEFORE appending assistant message
+                _tool_names_this_round = [
+                    tc.get("function", {}).get("name", "unknown")
+                    for tc in (assistant_dict.get("tool_calls") or [])
+                ]
+                _save_checkpoint(messages, _tool_names_this_round)
+
                 messages.append(assistant_dict)
                 # Persist intermediate assistant message (with tool_calls) to session
                 session.add_message(
@@ -1452,6 +1723,7 @@ class Agent:
                 )
 
                 round_had_error = False
+                _batch_results: list[bool] = []
                 for tc in msg.tool_calls:
                     name = tc.function.name
                     try:
@@ -1469,11 +1741,16 @@ class Agent:
                     })
                     
                     try:
-                        result = await self.skills.execute(name, params) # Changed to await self.skills.execute
+                        result = await self.skills.execute(name, params)
                         if not isinstance(result, str):
                             result = str(result)
                     except Exception as e:
                         result = f"Traceback (most recent call last): {e}"
+
+                    # Guard: truncate oversized tool results to avoid context overflow
+                    _MAX_TOOL_RESULT = 12000
+                    if len(result) > _MAX_TOOL_RESULT:
+                        result = result[:_MAX_TOOL_RESULT] + f"\n\n[输出已截断，共 {len(result)} 字符，仅显示前 {_MAX_TOOL_RESULT} 字符]"
                     
                     # Check for ask_user interrupt
                     is_ask_user_interrupt = (result == "__ASK_USER_INTERRUPT__")
@@ -1504,9 +1781,15 @@ class Agent:
                         "result": result[:500] + "..." if len(result) > 500 else result
                     })
 
-                    if result.strip().startswith("❌") or "Traceback (most recent call last):" in result:
+                    is_error = result.strip().startswith("❌") or "Traceback (most recent call last):" in result
+                    if is_error:
                         round_had_error = True
+                        _batch_results.append(False)
+                        _tool_fail_counter[name] = _tool_fail_counter.get(name, 0) + 1
                         tool_errors_history.append(f"尝试 `{name}({json.dumps(params, ensure_ascii=False)[:100]})` 失败: {result[:200]}")
+                    else:
+                        _batch_results.append(True)
+                        _tool_fail_counter[name] = 0
 
                     tool_msg = {
                         "role": "tool",
@@ -1521,22 +1804,42 @@ class Agent:
                     # Exit stream AFTER appending the tool response
                     if is_ask_user_interrupt:
                         self.sessions.save()
+                        # Update timestamp so idle extraction timer resets correctly
+                        self._last_message_time = time.time()
                         return  # Exit stream immediately
-                
+
+                # --- Checkpoint/Rollback check ---
+                all_failed = bool(_batch_results) and all(not s for s in _batch_results)
+                consec_fail_tool = next(
+                    (t for t, c in _tool_fail_counter.items() if c >= _CONSEC_FAIL_THRESHOLD), None
+                )
+                rollback_reason = None
+                if all_failed:
+                    rollback_reason = "本轮所有工具调用均失败"
+                elif consec_fail_tool:
+                    rollback_reason = f"工具 '{consec_fail_tool}' 连续失败 {_tool_fail_counter[consec_fail_tool]} 次"
+
+                if rollback_reason:
+                    restored = _try_rollback(rollback_reason)
+                    if restored is not None:
+                        messages = restored
+                        consecutive_errors = 0
+                        yield _yield_event({"type": "status", "content": f"🔄 检测到失败，正在尝试新方案（{rollback_reason}）..."})
+                        continue
+                    else:
+                        final_response = f"⚠️ **执行中止**：{rollback_reason}，且已达到最大回滚次数。建议检查工具配置后重试。"
+                        self.sessions.save()
+                        yield _yield_event({"type": "message", "content": ""})
+                        break
+
                 if round_had_error:
                     consecutive_errors += 1
                 else:
                     consecutive_errors = 0
-
-                if consecutive_errors >= 3:
-                    final_response = "⚠️ **执行安全中止**：检测到连续多次工具调用报错，已主动停止任务。建议检查日志后重试。"
-                    self.sessions.save()
-                    yield _yield_event({"type": "message", "content": ""})
-                    break
                     
                 continue
 
-            final_response = full_assistant_content.strip()
+            final_response = msg_content.strip()
             
             if not msg.tool_calls:
                 # This was the final text-only round. Persist it.
@@ -1554,9 +1857,28 @@ class Agent:
             # Actually, standardizing on loop-based additions is better.
             
         self.sessions.save()
-        
+
+        # Async memory extraction (non-blocking)
+        _user_msg = user_input if isinstance(user_input, str) else str(user_input)
+        _asst_msg = final_response or ""
+        self._last_message_time = time.time()
+        threading.Thread(
+            target=self.memory_extractor.extract_from_turn,
+            args=(_user_msg, _asst_msg),
+            daemon=True,
+            name="MemExtractTurn"
+        ).start()
+
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._check_all_triggers)
+
+    def _extract_conversation_and_mark(self, messages: list, session_id: str) -> None:
+        """Run batch memory extraction and mark the session as processed regardless of outcome."""
+        try:
+            self.memory_extractor.extract_from_conversation(messages)
+        finally:
+            self._last_extracted_session_id = session_id
+            self._extracting_conversation = False
 
     def _emit_system_event(self, content: str) -> None:
         """Central hub to record and broadcast background system events."""
@@ -1576,10 +1898,26 @@ class Agent:
         This ensures evolution happens automatically at midnight even if no user interaction occurs.
         """
         import time
+        _IDLE_TIMEOUT = 30 * 60  # 30 minutes
         while True:
-            time.sleep(60)  # Check every 60 seconds
+            time.sleep(60)
             try:
                 self._check_all_triggers()
+                # Idle timeout: batch extract from conversation
+                idle_seconds = time.time() - self._last_message_time
+                current_sid = self.sessions.current.session_id
+                if (idle_seconds >= _IDLE_TIMEOUT
+                        and current_sid != self._last_extracted_session_id
+                        and not self._extracting_conversation
+                        and len(self.sessions.current.get_history()) > 0):
+                    messages = self.sessions.current.get_history()
+                    self._extracting_conversation = True
+                    threading.Thread(
+                        target=self._extract_conversation_and_mark,
+                        args=(messages, current_sid),
+                        daemon=True,
+                        name="MemExtractConv"
+                    ).start()
             except Exception as e:
                 print(f"[EvolutionLoop] Error: {e}")
 

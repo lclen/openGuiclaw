@@ -110,12 +110,21 @@ def _cosine_similarity(a: List[float], b: List[float]) -> float:
 class VectorStore:
     """
     Persists embedding vectors. Supports multiple vectors (chunks) per ID.
-    Storage format: data/scene_memory_vectors.jsonl
+    Storage format: data/memory/scene_memory_vectors.jsonl
     """
 
     def __init__(self, data_dir: str = "data"):
-        self.vector_file = Path(data_dir) / "scene_memory_vectors.jsonl"
-        self._store: List[Tuple[str, List[float]]] = []  # List of (id, vector)
+        memory_dir = Path(data_dir) / "memory"
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        self.vector_file = memory_dir / "scene_memory_vectors.jsonl"
+
+        # Auto-migrate from legacy flat path
+        legacy = Path(data_dir) / "scene_memory_vectors.jsonl"
+        if legacy.exists() and not self.vector_file.exists():
+            legacy.rename(self.vector_file)
+            print(f"[VectorStore] 已迁移: {legacy} → {self.vector_file}")
+
+        self._store: List[Tuple[str, List[float]]] = []
         self._load()
 
     def _load(self) -> None:

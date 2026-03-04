@@ -1,0 +1,40 @@
+[     366ms] [WARNING] cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation @ https://cdn.tailwindcss.com/:63
+[    1262ms] [WARNING] VRMUtils.removeUnnecessaryJoints: removeUnnecessaryJoints is deprecated. Use combineSkeletons instead. combineSkeletons contributes more to the performance improvement. This function will be removed in the next major version. @ http://localhost:8010/static/libs/three-vrm.module.min.js:923
+[   34988ms] [WARNING] Alpine Warning: x-for key cannot be an object, it must be a string or an integer JSHandle@node @ https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:4
+[   94846ms] [WARNING] cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation @ https://cdn.tailwindcss.com/:63
+[   95813ms] [WARNING] VRMUtils.removeUnnecessaryJoints: removeUnnecessaryJoints is deprecated. Use combineSkeletons instead. combineSkeletons contributes more to the performance improvement. This function will be removed in the next major version. @ http://localhost:8010/static/libs/three-vrm.module.min.js:923
+[   97050ms] [WARNING] cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation @ https://cdn.tailwindcss.com/:63
+[   97809ms] [WARNING] VRMUtils.removeUnnecessaryJoints: removeUnnecessaryJoints is deprecated. Use combineSkeletons instead. combineSkeletons contributes more to the performance improvement. This function will be removed in the next major version. @ http://localhost:8010/static/libs/three-vrm.module.min.js:923
+[  102200ms] [WARNING] Alpine Warning: x-for key cannot be an object, it must be a string or an integer JSHandle@node @ https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:4
+[  155462ms] [WARNING] cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation @ https://cdn.tailwindcss.com/:63
+[  156495ms] [WARNING] VRMUtils.removeUnnecessaryJoints: removeUnnecessaryJoints is deprecated. Use combineSkeletons instead. combineSkeletons contributes more to the performance improvement. This function will be removed in the next major version. @ http://localhost:8010/static/libs/three-vrm.module.min.js:923
+[  163357ms] [WARNING] cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation @ https://cdn.tailwindcss.com/:63
+[  164372ms] [WARNING] VRMUtils.removeUnnecessaryJoints: removeUnnecessaryJoints is deprecated. Use combineSkeletons instead. combineSkeletons contributes more to the performance improvement. This function will be removed in the next major version. @ http://localhost:8010/static/libs/three-vrm.module.min.js:923
+[  168309ms] [WARNING] Alpine Warning: x-for key cannot be an object, it must be a string or an integer JSHandle@node @ https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:4
+[  252420ms] [WARNING] cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation @ https://cdn.tailwindcss.com/:63
+[  253445ms] [WARNING] VRMUtils.removeUnnecessaryJoints: removeUnnecessaryJoints is deprecated. Use combineSkeletons instead. combineSkeletons contributes more to the performance improvement. This function will be removed in the next major version. @ http://localhost:8010/static/libs/three-vrm.module.min.js:923
+[  257287ms] [WARNING] Alpine Warning: x-for key cannot be an object, it must be a string or an integer JSHandle@node @ https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:4
+[  301993ms] [WARNING] Alpine Warning: Duplicate key on x-for JSHandle@node @ https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:4
+[  301994ms] [WARNING] Alpine Expression Error: Cannot read properties of undefined (reading 'after')
+
+Expression: "chatEndpoints"
+
+ JSHandle@node @ https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:0
+[  302004ms] Uncaught TypeError: Cannot read properties of undefined (reading 'after')
+    at <anonymous> (https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:4:38254)
+    at h (https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:0:2012)
+    at <anonymous> (https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:4:38182)
+    at ht (https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:4:1514)
+    at <anonymous> (https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:4:1196)
+    at ur (https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:0:5137)
+    at po (https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:4:37215)
+    at <anonymous> (https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:4:37015)
+    at r (https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:4:19535)
+    at zn (https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:0:335)
+[  304655ms] [WARNING] cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation @ https://cdn.tailwindcss.com/:63
+[  306425ms] [ERROR] Failed to load model config: TypeError: Failed to fetch
+    at Proxy.loadModelConfig (http://localhost:8010/static/js/app-logic.js:407:33) @ http://localhost:8010/static/js/app-logic.js:423
+[  306843ms] [WARNING] VRMUtils.removeUnnecessaryJoints: removeUnnecessaryJoints is deprecated. Use combineSkeletons instead. combineSkeletons contributes more to the performance improvement. This function will be removed in the next major version. @ http://localhost:8010/static/libs/three-vrm.module.min.js:923
+[  307584ms] [WARNING] cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation @ https://cdn.tailwindcss.com/:63
+[  308476ms] [WARNING] VRMUtils.removeUnnecessaryJoints: removeUnnecessaryJoints is deprecated. Use combineSkeletons instead. combineSkeletons contributes more to the performance improvement. This function will be removed in the next major version. @ http://localhost:8010/static/libs/three-vrm.module.min.js:923
+[  310029ms] [WARNING] Alpine Warning: x-for key cannot be an object, it must be a string or an integer JSHandle@node @ https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:4

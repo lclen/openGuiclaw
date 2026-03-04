@@ -25,40 +25,35 @@ class JournalManager:
         path = self._get_file_path(date_str)
         timestamp = time.strftime("%H:%M:%S")
         
-        # --- Deduplication Logic for Visual Logs ---
-        if "[视觉日志]" in content and path.exists():
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-                
-                last_content = ""
-                for i in range(len(lines)-1, -1, -1):
-                    if lines[i].startswith("## ["):
-                        # Accumulate content lines after the timestamp
-                        content_lines = []
-                        for j in range(i+1, len(lines)):
-                            if lines[j].strip():
-                                content_lines.append(lines[j].strip())
-                        last_content = " ".join(content_lines)
-                        break
-                
-                # Simple similarity check: calculate character overlap overlap or exact match
-                if last_content and content.strip() in last_content or last_content in content.strip():
-                     # Content is functionally identical, just update the time and skip appending
-                     self.update_last_time(date_str)
-                     return
-                     
-                # For slightly varying descriptions (e.g. changing window names but same state),
-                # we can use sequence matcher if exact substring matching is too strict.
-                from difflib import SequenceMatcher
-                if last_content:
-                    similarity = SequenceMatcher(None, content.strip(), last_content).ratio()
-                    if similarity > 0.85: # If 85% similar, consider it a duplicate
-                        self.update_last_time(date_str)
-                        return
-                        
-            except Exception as e:
-                print(f"[Journal] Deduplication check failed: {e}")
+        # --- Deduplication Logic for Visual Logs (commented out: screen monitoring disabled) ---
+        # if "[视觉日志]" in content and path.exists():
+        #     try:
+        #         with open(path, "r", encoding="utf-8") as f:
+        #             lines = f.readlines()
+        #
+        #         last_content = ""
+        #         for i in range(len(lines)-1, -1, -1):
+        #             if lines[i].startswith("## ["):
+        #                 content_lines = []
+        #                 for j in range(i+1, len(lines)):
+        #                     if lines[j].strip():
+        #                         content_lines.append(lines[j].strip())
+        #                 last_content = " ".join(content_lines)
+        #                 break
+        #
+        #         if last_content and content.strip() in last_content or last_content in content.strip():
+        #              self.update_last_time(date_str)
+        #              return
+        #
+        #         from difflib import SequenceMatcher
+        #         if last_content:
+        #             similarity = SequenceMatcher(None, content.strip(), last_content).ratio()
+        #             if similarity > 0.85:
+        #                 self.update_last_time(date_str)
+        #                 return
+        #
+        #     except Exception as e:
+        #         print(f"[Journal] Deduplication check failed: {e}")
         # -------------------------------------------
 
         entry = f"\n## [{timestamp}]\n{content}\n"

@@ -1,24 +1,24 @@
 [
   {
-    "id": "task_e071d4a918a5",
-    "name": "测试",
-    "description": "",
-    "trigger_type": "once",
+    "id": "system_daily_selfcheck",
+    "name": "系统自检",
+    "description": "每日凌晨自动检查数据目录、日志错误、任务状态，生成健康报告",
+    "trigger_type": "cron",
     "trigger_config": {
-      "run_at": "2026-02-26T12:46:00.000Z"
+      "cron": "0 4 * * *"
     },
-    "task_type": "task",
-    "reminder_message": "",
-    "prompt": "给我发送一个“测试”",
-    "action": null,
+    "task_type": "system",
+    "reminder_message": null,
+    "prompt": "",
+    "action": "system:daily_selfcheck",
     "enabled": true,
     "status": "scheduled",
-    "deletable": true,
-    "last_run": "2026-02-26T20:44:50.658422",
-    "next_run": null,
-    "run_count": 5,
+    "deletable": false,
+    "last_run": "2026-03-04T04:00:01.435188",
+    "next_run": "2026-03-05T04:00:00",
+    "run_count": 1,
     "fail_count": 0,
-    "created_at": "2026-02-26T20:14:47.213431",
-    "updated_at": "2026-02-26T20:45:25.722699"
+    "created_at": "2026-03-03T12:12:14.283034",
+    "updated_at": "2026-03-04T04:00:01.435188"
   }
 ]

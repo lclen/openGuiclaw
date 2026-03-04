@@ -42,9 +42,17 @@ class JournalIndex:
     def __init__(self, embedding_client, data_dir: str = "data"):
         self.embedding_client = embedding_client
         self.data_dir = Path(data_dir)
-        self.index_file = self.data_dir / "journal_vectors.jsonl"
+        self.index_file = self.data_dir / "journals" / "journal_vectors.jsonl"
+        self.index_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Auto-migrate from legacy flat path
+        legacy = self.data_dir / "journal_vectors.jsonl"
+        if legacy.exists() and not self.index_file.exists():
+            legacy.rename(self.index_file)
+            print(f"[JournalIndex] 已迁移索引: {legacy} → {self.index_file}")
+
         self._chunks: List[JournalChunk] = []
-        self._indexed_dates: Dict[str, int] = {}  # date -> chunk count
+        self._indexed_dates: Dict[str, int] = {}
         self._load()
 
     # ── Public API ──────────────────────────────────────────────────

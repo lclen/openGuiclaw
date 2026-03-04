@@ -48,8 +48,10 @@
 
         // Data
         sessions: [],
+        currentSessionId: null,
         diaryDates: [],
         selectedDiaryContent: null,
+        memoryItems: [],
         personas: {},
         config: {
             browser_choice: 'edge',
@@ -101,6 +103,40 @@
         skillSearchQuery: '',
         skillCategoryFilter: 'all',
         skillStatusFilter: 'all',
+        skillMarketplace: [],
+        skillMarketLoading: false,
+        skillMarketSearch: '',
+        skillInstallingId: null,
+        skillInstallMsg: null,
+
+        // Model endpoint config state
+        configTab: 'models',
+        modelConfig: {},           // loaded from /api/config/model
+        modelDrafts: {},           // edit drafts per role
+        modelShowKey: {},          // show/hide API key per role
+        modelExpandedRole: 'api',  // which accordion card is open
+        modelSaving: {},           // saving spinner
+        modelTesting: {},          // testing spinner
+        modelTestResult: {},       // test result per role
+        modelProviders: [],        // from /api/config/model/providers
+        modelRoles: [],            // from /api/config/model/providers
+        modelDraftProvider: {},    // currently selected provider slug per role
+
+        // Chat Endpoints list state
+        chatEndpoints: [],         // list of {id,name,provider,base_url,api_key,model,...}
+        activeEndpointId: null,    // ID of the currently active endpoint
+        endpointSwitching: false,  // spinner when switching active endpoint
+        epEditIdx: null,           // which endpoint card is expanded for editing
+        epShowKey: {},             // show/hide api_key per endpoint index
+        epSaving: false,           // endpoint list save spinner
+        epTesting: {},             // testing per endpoint index
+        epTestResult: {},          // test result per endpoint index
+
+        // Role Endpoints (extra endpoints per functional role: vision/image_analyzer/embedding/autogui)
+        roleEndpoints: {},         // {role_key: [{name,provider,base_url,api_key,model,...}]}
+        roleEpTesting: {},         // {'vision-0': true/false}
+        roleEpTestResult: {},      // {'vision-0': {status,model,error}}
+        roleEpSaving: {},          // {role_key: true/false}
 
         // Token stats
         tokenStats: {
@@ -109,7 +145,9 @@
             total_tokens: 0,
             request_count: 0,
             by_model: {},
+            timeline: [],
         },
+        tokenPeriod: '1d',
 
         async init() {
             await this.checkStatus();
@@ -122,7 +160,446 @@
             this.loadCurrentSession();
             this.loadGlobalConfig();
             this.loadSchedulerTasks();
+            this.loadModelConfig();
+            this.loadChatEndpoints();
+            this.loadRoleEndpoints();
+            this.loadMemories();
         },
+
+        // ── loadRoleEndpoints ──────────────────────────────────────────────
+        // Merges the primary config.json role sections (vision/image_analyzer/embedding/autogui)
+        // with any extra endpoints stored under role_extra_endpoints.
+        async loadRoleEndpoints() {
+            const ROLE_KEYS = ['vision', 'image_analyzer', 'embedding', 'autogui'];
+            try {
+                // 1) Fetch primary role configs from /api/config/model
+                let primary = {};
+                const mr = await fetch('/api/config/model');
+                if (mr.ok) {
+                    const md = await mr.json();
+                    const cfg = md.config || {};
+                    for (const key of ROLE_KEYS) {
+                        if (cfg[key] && cfg[key].configured !== false) {
+                            primary[key] = {
+                                name: key === 'vision' ? '视觉模型（主）' :
+                                    key === 'image_analyzer' ? '图像解析（主）' :
+                                        key === 'embedding' ? '嵌入模型（主）' : 'GUI操作（主）',
+                                provider: '',
+                                base_url: cfg[key].base_url || '',
+                                api_key: cfg[key].api_key || '',
+                                model: cfg[key].model || '',
+                                _primary: true,  // marks this as the top-level config.json entry
+                            };
+                        }
+                    }
+                }
+
+                // 2) Fetch extra endpoints from /api/config/role-endpoints
+                let extra = {};
+                const er = await fetch('/api/config/role-endpoints');
+                if (er.ok) {
+                    const ed = await er.json();
+                    extra = ed.role_extra_endpoints || {};
+                }
+
+                // 3) Merge: primary first, then extra endpoints
+                const merged = {};
+                for (const key of ROLE_KEYS) {
+                    const arr = [];
+                    if (primary[key]) arr.push(primary[key]);
+                    if (extra[key] && Array.isArray(extra[key])) {
+                        extra[key].forEach(ep => {
+                            if (!ep._primary) arr.push(ep);
+                        });
+                    }
+
+                    // Auto-match provider for role endpoints
+                    if (this.modelProviders && this.modelProviders.length > 0) {
+                        arr.forEach(ep => {
+                            if (!ep.provider || ep.provider === 'custom') {
+                                const matched = this.modelProviders.find(pv =>
+                                    (pv.base_url && ep.base_url) &&
+                                    (pv.base_url.replace(/\/$/, '') === ep.base_url.replace(/\/$/, ''))
+                                );
+                                if (matched) ep.provider = matched.slug;
+                            }
+                        });
+                    }
+
+                    merged[key] = arr;
+                }
+                this.roleEndpoints = merged;
+            } catch (e) { console.error('Failed to load role endpoints:', e); }
+        },
+
+        async loadMemories() {
+            try {
+                const r = await fetch('/api/memory');
+                if (r.ok) {
+                    const data = await r.json();
+                    this.memoryItems = data.memories || [];
+                }
+            } catch (e) { console.error('Failed to load memories:', e); }
+        },
+
+
+        // ── Chat Endpoints Methods ────────────────────────────────────────────
+
+        async loadChatEndpoints() {
+            try {
+                const r = await fetch('/api/endpoints');
+                if (r.ok) {
+                    const data = await r.json();
+                    let endpoints = data.endpoints || [];
+
+                    // Auto-match provider by base_url if not explicitly set
+                    if (this.modelProviders && this.modelProviders.length > 0) {
+                        endpoints.forEach(ep => {
+                            if (!ep.provider || ep.provider === 'custom') {
+                                const matched = this.modelProviders.find(pv =>
+                                    (pv.base_url && ep.base_url) &&
+                                    (pv.base_url.replace(/\/$/, '') === ep.base_url.replace(/\/$/, ''))
+                                );
+                                if (matched) ep.provider = matched.slug;
+                            }
+                        });
+                    }
+
+                    this.chatEndpoints = endpoints;
+                    this.activeEndpointId = data.active_id || null;
+                }
+            } catch (e) { console.error('Failed to load chat endpoints:', e); }
+        },
+
+        addChatEndpoint() {
+            this.chatEndpoints.push({
+                id: null, name: '', provider: 'custom',
+                base_url: '', api_key: '', model: '',
+                max_tokens: 8000, temperature: 0.7,
+                _new: true,
+            });
+            // Directly set epExpandedIdx to open the new card
+            this.epExpandedIdx = this.chatEndpoints.length - 1;
+        },
+
+        deleteChatEndpoint(idx) {
+            this.chatEndpoints.splice(idx, 1);
+            if (this.epEditIdx === idx) this.epEditIdx = null;
+            else if (this.epEditIdx > idx) this.epEditIdx--;
+        },
+
+        applyEpPreset(epIdx, provider) {
+            const ep = this.chatEndpoints[epIdx];
+            if (!ep) return;
+            ep.provider = provider.slug;
+            ep.base_url = provider.base_url || '';
+            if (!ep.name) ep.name = provider.name;
+            if (provider.models && provider.models.length > 0 && !ep.model) {
+                ep.model = provider.models[0];
+            }
+            // Trigger reactivity
+            this.chatEndpoints = [...this.chatEndpoints];
+        },
+
+        async saveChatEndpoints() {
+            this.epSaving = true;
+            try {
+                const r = await fetch('/api/endpoints', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(this.chatEndpoints),
+                });
+                const data = await r.json();
+                if (r.ok && data.status === 'ok') {
+                    await this.loadChatEndpoints(); // reload with assigned IDs
+                    this.epEditIdx = null;
+                    this.pushLog('status', `✓ 已保存 ${data.count} 个端点配置`);
+                } else {
+                    this.pushLog('error', `端点保存失败：${data.detail || JSON.stringify(data)}`);
+                }
+            } catch (e) {
+                this.pushLog('error', `端点保存异常：${e.message}`);
+            } finally {
+                this.epSaving = false;
+            }
+        },
+
+        async testChatEndpoint(epIdx) {
+            const ep = this.chatEndpoints[epIdx];
+            if (!ep?.model) return;
+            this.epTesting[epIdx] = true;
+            this.epTestResult[epIdx] = null;
+            try {
+                const r = await fetch('/api/config/model/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        role: 'api',
+                        base_url: ep.base_url || '',
+                        api_key: ep.api_key || '',
+                        model: ep.model || '',
+                    }),
+                });
+                const data = await r.json();
+                this.epTestResult[epIdx] = data;
+                if (data.status === 'ok') {
+                    setTimeout(() => { this.epTestResult[epIdx] = null; }, 5000);
+                }
+            } catch (e) {
+                this.epTestResult[epIdx] = { status: 'error', error: e.message };
+            } finally {
+                this.epTesting[epIdx] = false;
+            }
+        },
+
+        async switchChatEndpoint(id) {
+            if (id === this.activeEndpointId || this.endpointSwitching) return;
+            this.endpointSwitching = true;
+            try {
+                const r = await fetch('/api/endpoints/active', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id }),
+                });
+                const data = await r.json();
+                if (r.ok && data.status === 'ok') {
+                    this.activeEndpointId = data.active_id;
+                    this.pushLog('status', `✓ 已切换模型 → ${data.name} (${data.model})`);
+                } else {
+                    this.pushLog('error', `切换失败：${data.detail || JSON.stringify(data)}`);
+                }
+            } catch (e) {
+                this.pushLog('error', `切换异常：${e.message}`);
+            } finally {
+                this.endpointSwitching = false;
+            }
+        },
+        // ── Role Endpoint Methods (vision / image_analyzer / embedding / autogui) ──────────
+
+        addRoleEndpoint(roleKey) {
+            if (!this.roleEndpoints[roleKey]) this.roleEndpoints[roleKey] = [];
+            this.roleEndpoints[roleKey].push({
+                name: '', provider: 'custom',
+                base_url: '', api_key: '', model: '',
+                _new: true,   // triggers auto-open in x-data
+            });
+            // Trigger Alpine reactivity
+            this.roleEndpoints = { ...this.roleEndpoints };
+        },
+
+        deleteRoleEndpoint(roleKey, idx) {
+            if (!this.roleEndpoints[roleKey]) return;
+            this.roleEndpoints[roleKey].splice(idx, 1);
+            this.roleEndpoints = { ...this.roleEndpoints };
+        },
+
+        applyRoleEpPreset(roleKey, idx, provider) {
+            if (!this.roleEndpoints[roleKey]?.[idx]) return;
+            const rep = this.roleEndpoints[roleKey][idx];
+            rep.provider = provider.slug;
+            rep.base_url = provider.base_url || '';
+            if (!rep.name) rep.name = provider.name;
+            if (provider.models?.length && !rep.model) rep.model = provider.models[0];
+            this.roleEndpoints = { ...this.roleEndpoints };
+        },
+
+        async testRoleEndpoint(roleKey, idx) {
+            const rep = this.roleEndpoints[roleKey]?.[idx];
+            if (!rep?.model) return;
+            const key = `${roleKey}-${idx}`;
+            this.roleEpTesting[key] = true;
+            this.roleEpTestResult[key] = null;
+            try {
+                const r = await fetch('/api/config/model/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        role: roleKey, base_url: rep.base_url || '',
+                        api_key: rep.api_key || '', model: rep.model || '',
+                    }),
+                });
+                const data = await r.json();
+                this.roleEpTestResult[key] = data;
+                if (data.status === 'ok') {
+                    setTimeout(() => { this.roleEpTestResult[key] = null; }, 5000);
+                }
+            } catch (e) {
+                this.roleEpTestResult[key] = { status: 'error', error: e.message };
+            } finally {
+                this.roleEpTesting[key] = false;
+            }
+        },
+
+        async saveRoleEndpoints(roleKey) {
+            // Splits endpoints into primary (top-level config.json key) and extra (role_extra_endpoints).
+            this.roleEpSaving[roleKey] = true;
+            try {
+                const allEps = this.roleEndpoints[roleKey] || [];
+                const primaryEp = allEps.find(ep => ep._primary);
+                const extraEps = allEps.filter(ep => !ep._primary);
+
+                // Save primary endpoint via /api/config/model (writes top-level role key)
+                if (primaryEp) {
+                    const pr = await fetch('/api/config/model', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            role: roleKey,
+                            base_url: primaryEp.base_url || '',
+                            api_key: primaryEp.api_key || '',
+                            model: primaryEp.model || '',
+                        }),
+                    });
+                    const pd = await pr.json();
+                    if (!pr.ok || pd.status !== 'ok') {
+                        this.pushLog('error', `主端点保存失败：${pd.detail || JSON.stringify(pd)}`);
+                        return;
+                    }
+                }
+
+                // Save extra endpoints via /api/config/role-endpoints
+                const er = await fetch('/api/config/role-endpoints', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ role: roleKey, endpoints: extraEps }),
+                });
+                const ed = await er.json();
+                if (er.ok && ed.status === 'ok') {
+                    // Clean _new flags
+                    allEps.forEach(ep => delete ep._new);
+                    this.roleEndpoints = { ...this.roleEndpoints };
+                    this.pushLog('status', `✓ ${roleKey} 角色端点已保存`);
+                } else {
+                    this.pushLog('error', `额外端点保存失败：${ed.detail || JSON.stringify(ed)}`);
+                }
+            } catch (e) {
+                this.pushLog('error', `保存异常：${e.message}`);
+            } finally {
+                this.roleEpSaving[roleKey] = false;
+            }
+        },
+        // ── End Role Endpoint Methods ─────────────────────────────────────────────
+
+        // ── End Chat Endpoints Methods ────────────────────────────────────────
+
+        // ── Model Config Methods ─────────────────────────────────────────
+        async loadModelConfig() {
+
+            try {
+                // Load providers/roles
+                const pr = await fetch('/api/config/model/providers');
+                if (pr.ok) {
+                    const pd = await pr.json();
+                    this.modelProviders = pd.providers || [];
+                    this.modelRoles = pd.roles || [];
+                }
+                // Load current config
+                const r = await fetch('/api/config/model');
+                if (r.ok) {
+                    const data = await r.json();
+                    this.modelConfig = data.config || {};
+                    // Initialize drafts from current config
+                    for (const [key, val] of Object.entries(this.modelConfig)) {
+                        if (!this.modelDrafts[key]) {
+                            this.modelDrafts[key] = {
+                                base_url: val.base_url || '',
+                                api_key: val.api_key || '',
+                                model: val.model || '',
+                                max_tokens: val.max_tokens || 8192,
+                                temperature: val.temperature || 0.7,
+                            };
+                        }
+                    }
+                }
+            } catch (e) { console.error('Failed to load model config:', e); }
+        },
+
+        toggleModelRole(key) {
+            this.modelExpandedRole = this.modelExpandedRole === key ? null : key;
+            // Clear old test result when switching
+            this.modelTestResult[key] = null;
+        },
+
+        setModelDraft(role, field, value) {
+            if (!this.modelDrafts[role]) this.modelDrafts[role] = {};
+            this.modelDrafts[role][field] = value;
+        },
+
+        applyProviderPreset(provider, currentRole) {
+            const role = currentRole || this.modelExpandedRole;
+            if (!role) return;
+            if (!this.modelDrafts[role]) this.modelDrafts[role] = {};
+            this.modelDrafts[role].base_url = provider.base_url || '';
+            if (provider.models && provider.models.length > 0) {
+                this.modelDrafts[role].model = provider.models[0];
+            }
+            this.modelDraftProvider[role] = provider.slug;
+            // Expand the card for this role
+            if (role) this.modelExpandedRole = role;
+        },
+
+        async saveModelEndpoint(role) {
+            const draft = this.modelDrafts[role];
+            if (!draft?.model) return;
+            this.modelSaving[role] = true;
+            this.modelTestResult[role] = null;
+            try {
+                const r = await fetch('/api/config/model', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        role,
+                        base_url: draft.base_url || '',
+                        api_key: draft.api_key || '',
+                        model: draft.model || '',
+                        max_tokens: draft.max_tokens || null,
+                        temperature: draft.temperature || null,
+                    })
+                });
+                const data = await r.json();
+                if (r.ok && data.status === 'ok') {
+                    // Refresh config from server
+                    await this.loadModelConfig();
+                    this.pushLog('status', `✓ ${role} 端点已保存：${draft.model}`);
+                } else {
+                    this.pushLog('error', `保存失败：${data.detail || JSON.stringify(data)}`);
+                }
+            } catch (e) {
+                this.pushLog('error', `保存异常：${e.message}`);
+            } finally {
+                this.modelSaving[role] = false;
+            }
+        },
+
+        async testModelEndpoint(role) {
+            const draft = this.modelDrafts[role];
+            if (!draft?.model) return;
+            this.modelTesting[role] = true;
+            this.modelTestResult[role] = null;
+            try {
+                const r = await fetch('/api/config/model/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        role,
+                        base_url: draft.base_url || '',
+                        api_key: draft.api_key || '',
+                        model: draft.model || '',
+                    })
+                });
+                const data = await r.json();
+                this.modelTestResult[role] = data;
+                // Auto-clear success result after 5s
+                if (data.status === 'ok') {
+                    setTimeout(() => { this.modelTestResult[role] = null; }, 5000);
+                }
+            } catch (e) {
+                this.modelTestResult[role] = { status: 'error', error: e.message };
+            } finally {
+                this.modelTesting[role] = false;
+            }
+        },
+        // ── End Model Config Methods ─────────────────────────────────────
 
         async loadGlobalConfig() {
             try {
@@ -186,7 +663,10 @@
                 const r = await fetch('/api/sessions/current/info');
                 if (r.ok) {
                     const { session_id } = await r.json();
-                    if (session_id) await this.loadSession(session_id, true);
+                    if (session_id) {
+                        this.currentSessionId = session_id;
+                        await this.loadSession(session_id, true);
+                    }
                 }
             } catch { /* silently ignore startup failures */ }
 
@@ -213,7 +693,13 @@
                         this.pushLog('system', `👀 视觉系统观察到屏幕新动态 (已禁用自动搭话)`);
                     } else if (ev.type === 'chat_event') {
                         // Real-time chat update from scheduler or other background tasks
-                        this.loadCurrentSession();
+                        this.loadCurrentSession().then(() => {
+                            this.$nextTick(() => this.scrollToBottom());
+                        });
+                        // If not on chat panel, switch to it so user sees the message
+                        if (this.activePanel !== 'chat') {
+                            this.activePanel = 'chat';
+                        }
                     }
                 } catch { }
             };
@@ -250,7 +736,7 @@
             if (panel === 'persona' && Object.keys(this.personas).length === 0) this.loadPersona();
             if (panel === 'skills' && this.skills.length === 0) this.loadSkills();
             if (panel === 'config' && this.vrmModels.length === 0) this.loadModels();
-            if (panel === 'tokens') this.loadTokenStats();
+            if (panel === 'tokens') this.loadTokenStats(this.tokenPeriod);
             if (panel === 'debug') {
                 this.$nextTick(() => {
                     const d = document.getElementById('debug-container');
@@ -281,6 +767,9 @@
                                 text = `${ev.name}(${JSON.stringify(ev.params || {}).slice(0, 50)}...)`;
                             } else if (ev.type === 'tool_result') {
                                 text = `${ev.name} → ${ev.result}`;
+                            } else if (ev.type === 'message') {
+                                text = (ev.content || '响应已完成').replace(/\s+/g, ' ').slice(0, 80);
+                                if ((ev.content || '').length > 80) text += '...';
                             } else {
                                 text = ev.content || '';
                             }
@@ -340,6 +829,7 @@
                 });
 
                 this.messages = validMessages;
+                this.currentSessionId = sessionId;
                 if (!keepPanel) this.activePanel = 'chat';
                 this.$nextTick(() => this.scrollToBottom());
             } catch { alert('加载对话失败。'); }
@@ -851,7 +1341,7 @@
             this.scrollToBottom();
 
             const aiId = 'a-' + Date.now();
-            this.messages.push({ id: aiId, role: 'assistant', content: '<span class="text-gray-400 text-xs italic animate-pulse">分析中...</span>' });
+            this.messages.push({ id: aiId, role: 'assistant', content: '<span class="text-gray-400 text-xs italic animate-pulse">分析中...</span>', thinkingHtml: '', _thinkingRaw: '', _thinkCollapsed: true, blocks: [] });
             this.scrollToBottom();
             this.isReceiving = true;
 
@@ -944,7 +1434,7 @@
             });
             this.scrollToBottom();
             const aiId = 'a-' + Date.now();
-            this.messages.push({ id: aiId, role: 'assistant', content: '<span class="text-gray-400 text-xs italic animate-pulse">思考中...</span>' });
+            this.messages.push({ id: aiId, role: 'assistant', content: '<span class="text-gray-400 text-xs italic animate-pulse">思考中...</span>', thinkingHtml: '', _thinkingRaw: '', _thinkCollapsed: true, blocks: [] });
             this.scrollToBottom();
             this.isReceiving = true;
             try {
@@ -1012,7 +1502,14 @@
                                 if (idx !== -1) {
                                     const m = this.messages[idx];
                                     if (!m._streaming) { m._streaming = true; m._rawContent = ''; m.content = ''; }
-                                    if (m._thinkCollapsed === false) m._thinkCollapsed = true;
+                                    // Collapse thinking block only after a short delay so users can see it
+                                    if (m._thinkCollapsed === false && !m._thinkCollapseScheduled) {
+                                        m._thinkCollapseScheduled = true;
+                                        setTimeout(() => {
+                                            m._thinkCollapsed = true;
+                                            m._thinkCollapseScheduled = false;
+                                        }, 1200);
+                                    }
                                     if (ev.content) {
                                         if (!m.blocks) m.blocks = [];
                                         const lastBlock = m.blocks[m.blocks.length - 1];
@@ -1026,7 +1523,16 @@
                                     this.scrollToBottom();
                                 }
                             } else if (ev.type === 'message') {
-                                this.pushLog('message', (ev.content || '').slice(0, 80) + ((ev.content || '').length > 80 ? '...' : ''));
+                                let logContent = (ev.content || '').trim();
+                                if (!logContent && idx !== -1) {
+                                    const m = this.messages[idx];
+                                    if (m.blocks) {
+                                        logContent = m.blocks.filter(b => b.type === 'text').map(b => b.content).join('').trim();
+                                    }
+                                }
+                                if (!logContent) logContent = '响应已完成';
+                                this.pushLog('message', logContent.replace(/\s+/g, ' ').slice(0, 80) + (logContent.length > 80 ? '...' : ''));
+
                                 if (idx !== -1) {
                                     const m = this.messages[idx];
                                     delete m._streaming;
@@ -1433,9 +1939,10 @@
         },
 
         // ═══════════════ Token Stats ═══════════════
-        async loadTokenStats() {
+        async loadTokenStats(period) {
             try {
-                const res = await fetch('/api/token-stats');
+                const p = period || '1d';
+                const res = await fetch(`/api/token-stats?period=${p}`);
                 if (res.ok) this.tokenStats = await res.json();
             } catch (e) { console.error('Failed to load token stats:', e); }
         },
@@ -1444,8 +1951,58 @@
             if (!confirm('确定要重置 Token 统计数据吗？')) return;
             try {
                 await fetch('/api/token-stats/reset', { method: 'POST' });
-                await this.loadTokenStats();
+                await this.loadTokenStats(this.tokenPeriod);
             } catch (e) { console.error('Failed to reset token stats:', e); }
+        },
+
+        async searchSkillMarketplace(q) {
+            this.skillMarketLoading = true;
+            this.skillInstallMsg = null;
+            try {
+                const res = await fetch('/api/skills/marketplace?q=' + encodeURIComponent(q || 'agent'));
+                const data = await res.json();
+                this.skillMarketplace = data.skills || [];
+            } catch (e) {
+                this.skillInstallMsg = { type: 'error', text: '加载失败: ' + e.message };
+            } finally {
+                this.skillMarketLoading = false;
+            }
+        },
+
+        async installSkillFromUrl(url) {
+            if (!url.trim()) return;
+            this.skillInstallMsg = null;
+            try {
+                const res = await fetch('/api/skills/install', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+                const data = await res.json();
+                if (!res.ok || data.error) throw new Error(data.error || data.detail || '安装失败');
+                this.skillInstallMsg = { type: 'success', text: '✓ 技能安装成功，已重新加载' };
+                await this.reloadSkills();
+            } catch (e) {
+                this.skillInstallMsg = { type: 'error', text: e.message };
+            }
+        },
+
+        async uninstallSkill(name) {
+            if (!confirm('确认卸载技能「' + name + '」？这将从注册表中移除该技能。')) return;
+            this.skillInstallMsg = null;
+            try {
+                const res = await fetch('/api/skills/uninstall', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name })
+                });
+                const data = await res.json();
+                if (!res.ok || data.error) throw new Error(data.error || data.detail || '卸载失败');
+                this.skillInstallMsg = { type: 'success', text: '已卸载技能「' + name + '」' };
+                await this.reloadSkills();
+            } catch (e) {
+                this.skillInstallMsg = { type: 'error', text: e.message };
+            }
         },
 
         formatNum(n) {

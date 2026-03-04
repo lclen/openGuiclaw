@@ -24,7 +24,8 @@ from core.persona_audit import PersonaAudit
 from core.knowledge_graph import KnowledgeGraph
 
 if TYPE_CHECKING:
-    pass
+    from core.identity_manager import IdentityManager
+    from core.daily_consolidator import DailyConsolidator
 
 
 # ── Prompts ──────────────────────────────────────────────────────────
@@ -228,24 +229,30 @@ class SelfEvolution:
         user_profile: Optional[Any] = None,
         journal_index=None,
         diary_index=None,
+        identity=None,              # IdentityManager | None
+        daily_consolidator=None,    # DailyConsolidator | None
     ):
         self.client = client
         self.model = model
         self.memory = memory
         self.journal = journal
         self.diary = DiaryManager(data_dir)
-        # 记录当前使用的基础人设（仅供日记生成时读取，不修改）
         self.persona_path = Path(persona_path)
-        
-        # We no longer modify persona_path. Persona files are immutable.
-        # We use a shared interaction_habits.md instead
-        self.habits_path = Path(data_dir) / "interaction_habits.md"
+        self.identity = identity
+        self.daily_consolidator = daily_consolidator
+
+        # habits_path: use identity layer if available, else legacy file
+        if identity is not None:
+            self.habits_path = identity.habits_path
+        else:
+            self.habits_path = Path(data_dir) / "interaction_habits.md"
+
         self.audit = PersonaAudit(persona_path=str(self.habits_path), data_dir=data_dir)
-        self.kg = knowledge_graph  # May be None if not initialized
+        self.kg = knowledge_graph
         self.user_profile = user_profile
-        self.journal_index = journal_index  # Optional: semantic search over journals
-        self.diary_index = diary_index      # Optional: semantic search over diaries
-        self._agentic_exploration_enabled = False  # opt-in via config: proactive.agentic_exploration
+        self.journal_index = journal_index
+        self.diary_index = diary_index
+        self._agentic_exploration_enabled = False
 
     def _call_api(self, messages: List[Dict[str, str]], **kwargs) -> Optional[str]:
         """带重试逻辑的 API 调用辅助函数。"""
@@ -286,6 +293,13 @@ class SelfEvolution:
         if not journal_content or not journal_content.strip():
             return []
 
+        # Step 0: Run DailyConsolidator if injected and not yet run today
+        if self.daily_consolidator and self.daily_consolidator.should_run(date_str):
+            try:
+                self.daily_consolidator.run(date_str)
+            except Exception as e:
+                print(f"[SelfEvolution] DailyConsolidator error: {e}")
+
         # Step 1: Write Diary
         self._write_diary(journal_content, date_str)
 
@@ -317,7 +331,11 @@ class SelfEvolution:
             return False
 
         memory_text = "\n".join(f"- {m.content}" for m in memories)
-        current_habits = self.habits_path.read_text(encoding="utf-8")
+        # Read habits from identity layer if available, else from file
+        if self.identity is not None:
+            current_habits = self.identity.get_habits()
+        else:
+            current_habits = self.habits_path.read_text(encoding="utf-8")
 
         prompt = PERSONA_PROMPT.format(
             memories=memory_text,
@@ -354,9 +372,13 @@ class SelfEvolution:
                 content = result.get("content", "").strip()
                 if not content:
                     return False
-                with open(self.habits_path, "a", encoding="utf-8") as f:
+                if self.identity is not None:
                     ts = time.strftime("%Y-%m-%d")
-                    f.write(f"\n\n<!-- 自动进化 {ts} -->\n{content}\n")
+                    self.identity.append_habit(f"<!-- 自动进化 {ts} -->\n{content}")
+                else:
+                    with open(self.habits_path, "a", encoding="utf-8") as f:
+                        ts = time.strftime("%Y-%m-%d")
+                        f.write(f"\n\n<!-- 自动进化 {ts} -->\n{content}\n")
                 print(f"[SelfEvolution] ✨ 交互习惯已追加: {content[:60]}...")
                 return True
 
@@ -365,9 +387,16 @@ class SelfEvolution:
                 replacement = result.get("replacement_text", "").strip()
                 if not target or not replacement:
                     return False
-                if target in current_habits:
-                    new_content = current_habits.replace(target, replacement)
-                    self.habits_path.write_text(new_content, encoding="utf-8")
+                if self.identity is not None:
+                    success = self.identity.modify_habit(target, replacement)
+                else:
+                    if target in current_habits:
+                        new_content = current_habits.replace(target, replacement)
+                        self.habits_path.write_text(new_content, encoding="utf-8")
+                        success = True
+                    else:
+                        success = False
+                if success:
                     print("[SelfEvolution] 🛠️ 交互习惯描述已修正。")
                     return True
                 else:
@@ -564,11 +593,18 @@ class SelfEvolution:
                 layer = pu.get("layer", "objective").strip().lower()
                 key = pu.get("key", "").strip()
                 val = pu.get("value", "").strip()
-                if key and val and self.user_profile:
-                    if layer == "subjective":
-                        self.user_profile.update_subjective(key, val)
-                    else:
-                        self.user_profile.update_objective(key, val)
+                if key and val:
+                    if self.identity is not None:
+                        # Route through identity layer
+                        if layer == "subjective":
+                            self.identity.append_habit(f"- **{key}**: {val}")
+                        else:
+                            self.identity.update_user(key, val)
+                    elif self.user_profile:
+                        if layer == "subjective":
+                            self.user_profile.update_subjective(key, val)
+                        else:
+                            self.user_profile.update_objective(key, val)
                     saved.append(f"[档案更新] {layer}.{key}: {val}")
 
             # 2. Update Memory

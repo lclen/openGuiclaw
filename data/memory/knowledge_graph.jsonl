@@ -1,0 +1,118 @@
+{"subject": "米勒", "relation": "偏好", "object": "VSCode", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "米勒", "relation": "偏好", "object": "Antigravity", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "用户", "relation": "使用", "object": "VSCode", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "用户", "relation": "使用", "object": "Claude Code", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "用户", "relation": "使用", "object": "Qwen 自动化工具", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "用户", "relation": "编辑", "object": "plugin_manager.py", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "用户", "relation": "编辑", "object": "weather.py", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "用户", "relation": "编辑", "object": "self_evolution.py", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "用户", "relation": "编辑", "object": "agent.py", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "用户", "relation": "编辑", "object": "memory.py", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "用户", "relation": "查看", "object": "memory.json", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "Qwen 3.5", "relation": "发布于", "object": "2 月 16 日", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "Qwen 3.5", "relation": "采用", "object": "MoE 架构", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "摩尔线程", "relation": "完成适配", "object": "GPU", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "self_evolution.py", "relation": "关联功能", "object": "AI 助理的自我进化功能", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "米勒", "relation": "查询", "object": "南京天气", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "南京", "relation": "天气状况", "object": "多云转晴", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:29"}
+{"subject": "米勒", "relation": "年龄是", "object": "25 岁", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:32"}
+{"subject": "南京", "relation": "天气是", "object": "多云转晴", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:32"}
+{"subject": "Qwen 3.5", "relation": "发布日期是", "object": "2 月 16 日", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:32"}
+{"subject": "Qwen 3.5", "relation": "采用架构", "object": "MoE 架构", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:32"}
+{"subject": "摩尔线程", "relation": "完成", "object": "GPU 适配", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:32"}
+{"subject": "plugin_manager.py", "relation": "是", "object": "Python 文件", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:32"}
+{"subject": "weather.py", "relation": "是", "object": "Python 插件文件", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:32"}
+{"subject": "self_evolution.py", "relation": "是", "object": "Python 文件", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:32"}
+{"subject": "agent.py", "relation": "是", "object": "Python 文件", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:32"}
+{"subject": "memory.py", "relation": "是", "object": "Python 文件", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:32"}
+{"subject": "AI", "relation": "核心能力为", "object": "文件操作", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:32"}
+{"subject": "AI", "relation": "核心能力为", "object": "屏幕自动化", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:32"}
+{"subject": "AI", "relation": "核心能力为", "object": "记忆管理", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:32"}
+{"subject": "AI", "relation": "无", "object": "内置联网搜索工具", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:32"}
+{"subject": "功能升级建议", "relation": "基于", "object": "OpenKita 研究", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:32"}
+{"subject": "系统时间", "relation": "是", "object": "2026-02-19", "source": "journal:2026-02-19", "ts": "2026-02-20 13:36:32"}
+{"subject": "用户", "relation": "使用", "object": "AI 助理框架", "source": "journal:2026-02-19", "ts": "2026-02-20 13:41:12"}
+{"subject": "摩尔线程", "relation": "完成 GPU 适配", "object": "Qwen 3.5", "source": "journal:2026-02-19", "ts": "2026-02-20 13:41:12"}
+{"subject": "example.com", "relation": "是", "object": "保留示例域名", "source": "journal:2026-02-19", "ts": "2026-02-20 13:41:12"}
+{"subject": "OpenKita", "relation": "涉及", "object": "向量记忆和插件系统", "source": "journal:2026-02-19", "ts": "2026-02-20 13:41:12"}
+{"subject": "米勒", "relation": "偏好使用", "object": "VSCode", "source": "journal:2026-02-19", "ts": "2026-02-20 14:11:17"}
+{"subject": "用户", "relation": "查询", "object": "南京天气", "source": "journal:2026-02-19", "ts": "2026-02-20 14:11:17"}
+{"subject": "AI", "relation": "支持", "object": "文件操作", "source": "journal:2026-02-19", "ts": "2026-02-20 14:11:17"}
+{"subject": "AI", "relation": "支持", "object": "屏幕自动化", "source": "journal:2026-02-19", "ts": "2026-02-20 14:11:17"}
+{"subject": "AI", "relation": "支持", "object": "记忆管理", "source": "journal:2026-02-19", "ts": "2026-02-20 14:11:17"}
+{"subject": "AI", "relation": "不具备", "object": "内置联网搜索工具", "source": "journal:2026-02-19", "ts": "2026-02-20 14:11:17"}
+{"subject": "example.com", "relation": "是", "object": "保留域名", "source": "journal:2026-02-19", "ts": "2026-02-20 14:11:17"}
+{"subject": "Qwen 3.5", "relation": "涉及", "object": "MoE 架构", "source": "journal:2026-02-19", "ts": "2026-02-20 14:11:17"}
+{"subject": "Qwen 3.5", "relation": "涉及", "object": "摩尔线程适配", "source": "journal:2026-02-19", "ts": "2026-02-20 14:11:17"}
+{"subject": "OpenKita", "relation": "涉及", "object": "向量记忆", "source": "journal:2026-02-19", "ts": "2026-02-20 14:11:17"}
+{"subject": "OpenKita", "relation": "涉及", "object": "插件系统", "source": "journal:2026-02-19", "ts": "2026-02-20 14:11:17"}
+{"subject": "用户", "relation": "编辑", "object": "框架流程.md", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "编辑", "object": "mcp_servers.json", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "配置", "object": "MCP 服务", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "使用", "object": "AI 助手", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "编辑", "object": "Implementation Plan", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "使用", "object": "Open Agent Manager", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "使用", "object": "Bing 搜索引擎", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "启动", "object": "Edge 浏览器", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "运行", "object": "browser.py", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "运行", "object": "main.py", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "调试", "object": "qwen_autogui", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "观看", "object": "《凶宅笔记》第九回", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "访问", "object": "与山 0v0 动态页", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "访问", "object": "阿怪 MrWeird 视频页", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "小助", "relation": "记录", "object": "qwen_autogui", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "查询", "object": "LangChain 版本", "source": "journal:2026-02-21", "ts": "2026-02-22 12:56:36"}
+{"subject": "用户", "relation": "开发", "object": "qwen_autogui", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "qwen_autogui", "relation": "使用后端框架", "object": "FastAPI", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "用户", "relation": "使用工具", "object": "VSCode", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "用户", "relation": "查阅仓库", "object": "Project-N-E-K-O/N.E.K.O", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "用户", "relation": "查阅仓库", "object": "lobehub", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "用户", "relation": "集成模型", "object": "VRoid", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "用户", "relation": "访问 UP 主", "object": "与山 0v0", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "用户", "relation": "访问 UP 主", "object": "阿怪 MrWeird", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "用户", "relation": "保存文件", "object": "C:\\Users\\Lclen\\AI 新闻汇总_20260220.md", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI", "relation": "具备技能", "object": "remember", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI", "relation": "具备技能", "object": "search_memory", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI", "relation": "具备技能", "object": "create_plan", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI", "relation": "具备技能", "object": "execute_command", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI", "relation": "使用外挂技能", "object": "autogui", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI", "relation": "打开网页", "object": "哔哩哔哩", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI", "relation": "查询天气", "object": "南京", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI 新闻汇总", "relation": "涵盖内容", "object": "Gemini 3.1 Pro 发布", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "AI 新闻汇总", "relation": "涵盖内容", "object": "Nvidia 与 OpenAI 投资协议", "source": "journal:2026-02-22", "ts": "2026-02-23 12:34:37"}
+{"subject": "米勒", "relation": "是", "object": "用户", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "米勒", "relation": "居住在", "object": "南京", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "用户", "relation": "正在开发", "object": "qwen_autogui", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "qwen_autogui", "relation": "基于语言", "object": "Python", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "qwen_autogui", "relation": "使用工具", "object": "autogui", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "用户", "relation": "使用编辑器", "object": "VSCode", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "qwen_autogui", "relation": "集成", "object": "VRM 虚拟角色模型", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "qwen_autogui", "relation": "使用模型工具", "object": "VRoid", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "AI 助手", "relation": "使用命令工具", "object": "PowerShell", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "Win+R", "relation": "适用于", "object": "系统命令或网址", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "server.py", "relation": "属于项目", "object": "qwen_autogui", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "browser.py", "relation": "属于项目", "object": "qwen_autogui", "source": "journal:2026-02-23", "ts": "2026-02-24 22:04:06"}
+{"subject": "用户", "relation": "编辑", "object": "naboot_autogui", "source": "journal:2026-02-24", "ts": "2026-02-25 19:23:34"}
+{"subject": "用户", "relation": "处理", "object": "yaen_autogui", "source": "journal:2026-02-24", "ts": "2026-02-25 19:23:34"}
+{"subject": "naboot_autogui", "relation": "是", "object": "Python 自动化项目", "source": "journal:2026-02-24", "ts": "2026-02-25 19:23:34"}
+{"subject": "yaen_autogui", "relation": "是", "object": "自动化项目", "source": "journal:2026-02-24", "ts": "2026-02-25 19:23:34"}
+{"subject": "yaen_autogui", "relation": "运行", "object": "Python 脚本", "source": "journal:2026-02-24", "ts": "2026-02-25 19:23:34"}
+{"subject": "用户", "relation": "运行", "object": "FastAPI", "source": "journal:2026-02-25", "ts": "2026-02-26 16:21:17"}
+{"subject": "用户", "relation": "运行", "object": "OpenWebUI", "source": "journal:2026-02-25", "ts": "2026-02-26 16:21:17"}
+{"subject": "用户", "relation": "编辑", "object": "配置文件", "source": "journal:2026-02-25", "ts": "2026-02-26 16:21:17"}
+{"subject": "nanobot", "relation": "是", "object": "代理项目", "source": "journal:2026-02-25", "ts": "2026-02-26 16:21:17"}
+{"subject": "Journal", "relation": "是", "object": "开发任务", "source": "journal:2026-02-25", "ts": "2026-02-26 16:21:17"}
+{"subject": "系统", "relation": "监控", "object": "用户", "source": "journal:2026-02-25", "ts": "2026-02-26 16:21:17"}
+{"subject": "中信建投", "relation": "拟出资设立", "object": "中信建投证券资产管理有限公司", "source": "journal:2026-03-02", "ts": "2026-03-03 00:09:58"}
+{"subject": "中信证券", "relation": "拟出资设立", "object": "中信证券资产管理有限公司", "source": "journal:2026-03-02", "ts": "2026-03-03 00:09:58"}
+{"subject": "中金公司", "relation": "拟出资设立", "object": "中金资产管理有限公司", "source": "journal:2026-03-02", "ts": "2026-03-03 00:09:58"}
+{"subject": "华创证券", "relation": "拟出资设立", "object": "华创证券资产管理有限公司", "source": "journal:2026-03-02", "ts": "2026-03-03 00:09:58"}
+{"subject": "华创阳安", "relation": "拥有全资子公司", "object": "华创证券", "source": "journal:2026-03-02", "ts": "2026-03-03 00:09:58"}
+{"subject": "国泰君安证券", "relation": "拥有全资子公司", "object": "上海国泰君安证券资产管理有限公司", "source": "journal:2026-03-02", "ts": "2026-03-03 00:09:58"}
+{"subject": "吴君", "relation": "是...的记者", "object": "中国基金报", "source": "journal:2026-03-02", "ts": "2026-03-03 00:09:58"}
+{"subject": "澎湃新闻", "relation": "发布新闻", "object": "资管圈大事！2000 亿券业巨头出手了", "source": "journal:2026-03-02", "ts": "2026-03-03 00:09:58"}
+{"subject": "用户", "relation": "查询", "object": "今天 b 站热搜", "source": "journal:2026-03-03", "ts": "2026-03-04 00:06:12"}
+{"subject": "AI", "relation": "调用", "object": "https://s.search.bilibili.com/main/hotword", "source": "journal:2026-03-03", "ts": "2026-03-04 00:06:12"}
+{"subject": "AI", "relation": "执行", "object": "纯 API 抓取策略", "source": "journal:2026-03-03", "ts": "2026-03-04 00:06:12"}
+{"subject": "用户", "relation": "询问", "object": "月全食是否已经开始", "source": "journal:2026-03-03", "ts": "2026-03-04 00:06:12"}
+{"subject": "AL", "relation": "战胜", "object": "IG", "source": "journal:2026-03-03", "ts": "2026-03-04 00:06:12"}

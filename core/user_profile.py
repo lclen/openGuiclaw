@@ -4,18 +4,28 @@ User Profile Manager
 Manages a dedicated JSON file for storing structural information about the user.
 This ensures highly concentrated, factual user traits (name, age, preferences, etc.)
 are always present in the system prompt without cluttering episodic memory.
+
+When an IdentityManager is provided, all reads/writes are delegated to it.
 """
 
 import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+
 
 class UserProfileManager:
-    def __init__(self, data_dir: str, profile_filename: str = "user_profile.json"):
+    def __init__(
+        self,
+        data_dir: str,
+        profile_filename: str = "user_profile.json",
+        identity_manager=None,
+    ):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.profile_path = self.data_dir / profile_filename
-        self.profile_data: Dict[str, Any] = self._load()
+        self._identity = identity_manager
+        # Only load JSON when not delegating
+        self.profile_data: Dict[str, Any] = {} if identity_manager else self._load()
 
     def _load(self) -> Dict[str, Any]:
         """Load user profile from JSON file and ensure schema."""
@@ -32,7 +42,6 @@ class UserProfileManager:
                     # Migration from flat structure
                     if "objective_memory" not in data and "subjective_memory" not in data:
                         migrated_data = {"objective_memory": data, "subjective_memory": {}}
-                        # Persist migrated format immediately to avoid re-migrating every startup
                         try:
                             with open(self.profile_path, "w", encoding="utf-8") as fw:
                                 json.dump(migrated_data, fw, ensure_ascii=False, indent=4)
@@ -40,7 +49,6 @@ class UserProfileManager:
                             pass
                         return migrated_data
                     
-                    # Ensure both layers exist
                     if "objective_memory" not in data: data["objective_memory"] = {}
                     if "subjective_memory" not in data: data["subjective_memory"] = {}
                     
@@ -60,22 +68,35 @@ class UserProfileManager:
 
     def update_objective(self, key: str, value: str) -> None:
         """Update or add a specific user objective trait (facts)."""
-        self.profile_data["objective_memory"][key] = value
-        self._save()
+        if self._identity:
+            self._identity.update_user(key, value)
+        else:
+            self.profile_data["objective_memory"][key] = value
+            self._save()
         print(f"[UserProfile] 客观档案已更新: {key} -> {value}")
 
     def update_subjective(self, key: str, value: str) -> None:
         """Update or add a specific user subjective trait (rules, preferences)."""
-        self.profile_data["subjective_memory"][key] = value
-        self._save()
+        if self._identity:
+            self._identity.append_habit(f"- **{key}**: {value}")
+        else:
+            self.profile_data["subjective_memory"][key] = value
+            self._save()
         print(f"[UserProfile] 主观偏好已更新: {key} -> {value}")
 
     def get_all(self) -> Dict[str, Any]:
         """Get all profile traits."""
+        if self._identity:
+            user = self._identity.get_user()
+            habits = self._identity.get_habits()
+            return {"objective_memory": user, "subjective_memory": {"_habits": habits}}
         return self.profile_data
 
     def build_prompt(self) -> str:
         """Build the text block to be injected into the system prompt."""
+        if self._identity:
+            return self._identity.build_prompt()
+
         if not self.profile_data.get("objective_memory") and not self.profile_data.get("subjective_memory"):
             return ""
         

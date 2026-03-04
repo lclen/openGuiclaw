@@ -1,0 +1,3 @@
+[     143ms] [WARNING] cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation @ https://cdn.tailwindcss.com/:63
+[     909ms] [ERROR] Error: <path> attribute d: Expected moveto path command ('M' or 'm'), "Wait, using simp…". @ https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js:4
+[    5107ms] [WARNING] VRMUtils.removeUnnecessaryJoints: removeUnnecessaryJoints is deprecated. Use combineSkeletons instead. combineSkeletons contributes more to the performance improvement. This function will be removed in the next major version. @ http://localhost:8010/static/libs/three-vrm.module.min.js:923

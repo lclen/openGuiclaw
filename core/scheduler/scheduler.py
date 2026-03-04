@@ -44,7 +44,7 @@ class TaskScheduler:
         self.timezone = timezone
         self.max_concurrent = max_concurrent
         self.check_interval = check_interval_seconds
-        self.advance_seconds = advance_seconds
+        self.advance_seconds = 0  # no advance trigger; cron times are exact
 
         self._tasks: dict[str, ScheduledTask] = {}
         self._triggers: dict[str, Trigger] = {}
@@ -65,7 +65,13 @@ class TaskScheduler:
         for task in self._tasks.values():
             if task.is_active:
                 if task.next_run is None:
-                    self._update_next_run(task)
+                    # ONCE task with last_run set means it already fired — mark completed
+                    if task.trigger_type == TriggerType.ONCE and task.last_run is not None:
+                        logger.info(f"One-time task {task.id} has last_run but no next_run, marking completed")
+                        task.status = TaskStatus.COMPLETED
+                        task.enabled = False
+                    else:
+                        self._update_next_run(task)
                 elif task.next_run < now:
                     self._recalculate_missed_run(task, now)
 
@@ -271,8 +277,10 @@ class TaskScheduler:
 
         if task.trigger_type == TriggerType.ONCE:
             logger.info(f"One-time task {task.id} missed, marking as completed")
+            task.last_run = task.last_run or now  # ensure last_run is set so restart won't re-trigger
             task.status = TaskStatus.COMPLETED
             task.enabled = False
+            self._save_tasks()
             return
 
         next_run = trigger.get_next_run_time(now)

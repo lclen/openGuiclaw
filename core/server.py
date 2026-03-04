@@ -149,37 +149,152 @@ async def lifespan(app: FastAPI):
             if not ag:
                 return False, "Agent not ready"
             
+            def _push(event: dict):
+                _ctx_event_queue.put(event)
+
             try:
-                loop = asyncio.get_running_loop()
-                _ctx_event_queue.put({
-                    "type": "chat_event",
-                    "role": "system",
-                    "content": f"⏰ [计划任务触发] {task.name}"
-                })
+                _push({"type": "chat_event", "role": "system", "content": f"⏰ [计划任务触发] {task.name}"})
                 
+                # ── 系统内置任务（不走 LLM）──────────────────────────────
+                if task.task_type.value == "system":
+                    return await _execute_system_task(task, _push)
+
                 if task.task_type.value == "reminder":
-                    _ctx_event_queue.put({
-                        "type": "chat_event",
-                        "role": "assistant",
-                        "content": task.reminder_message or "无提醒内容"
-                    })
+                    msg = task.reminder_message or "无提醒内容"
+                    # Persist reminder as assistant message so it shows in chat history
+                    ag.sessions.current.add_message("assistant", f"⏰ **{task.name}**\n\n{msg}")
+                    ag.sessions.save()
+                    _push({"type": "chat_event", "role": "assistant", "content": msg})
                     return True, "Reminder sent"
                 else:
-                    _ctx_event_queue.put({
-                        "type": "chat_event",
-                        "role": "user",
-                        "content": task.prompt
-                    })
-                    response = await loop.run_in_executor(None, ag.chat, task.prompt)
-                    _ctx_event_queue.put({
-                        "type": "chat_event",
-                        "role": "assistant",
-                        "content": response
-                    })
+                    # Build the prompt with task context prefix
+                    full_prompt = f"[计划任务: {task.name}] {task.prompt}"
+                    _push({"type": "chat_event", "role": "user", "content": full_prompt})
+
+                    # Run ag.chat in a dedicated thread with its own event loop
+                    # to avoid nested-asyncio issues (ag.chat is sync but calls asyncio internally)
+                    # ag.chat() internally persists both the user message and assistant response.
+                    import concurrent.futures
+
+                    def _run_chat():
+                        import asyncio as _asyncio
+                        loop = _asyncio.new_event_loop()
+                        _asyncio.set_event_loop(loop)
+                        try:
+                            return ag.chat(full_prompt)
+                        finally:
+                            loop.close()
+                            _asyncio.set_event_loop(None)
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="sched") as pool:
+                        response = await asyncio.get_running_loop().run_in_executor(pool, _run_chat)
+
+                    _push({"type": "chat_event", "role": "assistant", "content": response})
                     return True, response
             except Exception as e:
-                logger.error(f"Scheduled task error: {e}")
+                logger.error(f"Scheduled task error: {e}", exc_info=True)
                 return False, str(e)
+
+        async def _execute_system_task(task: ScheduledTask, push_fn) -> tuple[bool, str]:
+            """执行系统内置任务，不通过 LLM。"""
+            action = task.action or ""
+            if action == "system:daily_selfcheck":
+                return await _system_daily_selfcheck(push_fn)
+            return False, f"Unknown system action: {action}"
+
+        async def _system_daily_selfcheck(push_fn) -> tuple[bool, str]:
+            """
+            系统自检：检查数据目录完整性、日志错误、调度器状态，
+            生成摘要报告并以 assistant 消息推送到聊天。
+            """
+            import glob
+            from datetime import datetime
+
+            lines = [f"## 🔍 系统自检报告 — {datetime.now().strftime('%Y-%m-%d %H:%M')}"]
+            issues = []
+
+            # 1. 数据目录检查
+            required_dirs = ["data", "data/sessions", "data/memory", "data/scheduler", "data/diary"]
+            for d in required_dirs:
+                if not os.path.exists(d):
+                    try:
+                        os.makedirs(d, exist_ok=True)
+                        issues.append(f"⚠️ 目录 `{d}` 不存在，已自动创建")
+                    except Exception as e:
+                        issues.append(f"❌ 目录 `{d}` 创建失败: {e}")
+
+            # 2. 日志错误扫描（扫描 Python logging 输出的 ERROR 行）
+            log_errors: dict[str, int] = {}
+            log_files = glob.glob("*.log") + glob.glob("logs/*.log")
+            for lf in log_files:
+                try:
+                    with open(lf, "r", encoding="utf-8", errors="ignore") as f:
+                        for line in f:
+                            if " ERROR " in line or " CRITICAL " in line:
+                                # 提取模块名作为 key
+                                parts = line.split(" - ")
+                                module = parts[1].strip() if len(parts) > 2 else "unknown"
+                                log_errors[module] = log_errors.get(module, 0) + 1
+                except Exception:
+                    pass
+
+            # 3. 调度器任务状态
+            scheduler = app_state.get("task_scheduler")
+            task_summary = {"total": 0, "enabled": 0, "failed": 0}
+            if scheduler:
+                tasks = scheduler.list_tasks()
+                task_summary["total"] = len(tasks)
+                task_summary["enabled"] = sum(1 for t in tasks if t.enabled)
+                task_summary["failed"] = sum(1 for t in tasks if t.fail_count > 0)
+
+            # 4. Agent 状态
+            ag = app_state.get("agent")
+            agent_ok = ag is not None
+
+            # 5. Session 文件数量
+            session_count = len(glob.glob("data/sessions/*.json"))
+
+            # 6. 记忆条目数
+            memory_count = 0
+            memory_file = "data/memory.jsonl"
+            if os.path.exists(memory_file):
+                try:
+                    with open(memory_file, "r", encoding="utf-8") as f:
+                        memory_count = sum(1 for line in f if line.strip())
+                except Exception:
+                    pass
+
+            # ── 组装报告 ──────────────────────────────────────────────
+            lines.append(f"\n**Agent 状态**: {'✅ 在线' if agent_ok else '❌ 离线'}")
+            lines.append(f"**会话文件**: {session_count} 个")
+            lines.append(f"**记忆条目**: {memory_count} 条")
+            lines.append(f"\n**计划任务**: 共 {task_summary['total']} 个，启用 {task_summary['enabled']} 个，有失败记录 {task_summary['failed']} 个")
+
+            if log_errors:
+                lines.append(f"\n**日志错误** ({sum(log_errors.values())} 条):")
+                for mod, cnt in sorted(log_errors.items(), key=lambda x: -x[1])[:5]:
+                    lines.append(f"  - `{mod}`: {cnt} 次")
+            else:
+                lines.append("\n**日志错误**: 无")
+
+            if issues:
+                lines.append("\n**自动修复**:")
+                for issue in issues:
+                    lines.append(f"  - {issue}")
+
+            status = "✅ 系统运行正常" if not issues and not log_errors else f"⚠️ 发现 {len(issues)} 个问题，{len(log_errors)} 个错误模块"
+            lines.append(f"\n**总结**: {status}")
+
+            report = "\n".join(lines)
+
+            # 持久化到 session 并推送
+            if ag:
+                ag.sessions.current.add_message("assistant", report)
+                ag.sessions.save()
+            push_fn({"type": "chat_event", "role": "assistant", "content": report})
+
+            logger.info(f"System selfcheck completed: {status}")
+            return True, status
 
         task_scheduler = TaskScheduler(
             storage_path=Path("data/scheduler"),
@@ -187,6 +302,40 @@ async def lifespan(app: FastAPI):
         )
         await task_scheduler.start()
         app_state["task_scheduler"] = task_scheduler
+
+        # ── 注册内置系统任务 ──────────────────────────────────────────
+        from core.scheduler import TriggerType, TaskType
+        
+        # 查找是否存在 selfcheck 任务
+        existing_selfcheck = next((t for t in task_scheduler.list_tasks() if t.action == "system:daily_selfcheck"), None)
+
+        if not existing_selfcheck:
+            selfcheck_task = ScheduledTask(
+                id="system_daily_selfcheck",
+                name="系统自检",
+                description="每日凌晨自动检查数据目录、日志错误、任务状态，生成健康报告",
+                trigger_type=TriggerType.CRON,
+                trigger_config={"cron": "0 4 * * *"},
+                task_type=TaskType.SYSTEM,
+                prompt="",
+                action="system:daily_selfcheck",
+                deletable=False,
+            )
+            await task_scheduler.add_task(selfcheck_task)
+            logger.info("Registered built-in task: system_daily_selfcheck (04:00 daily)")
+        else:
+            # 确保已有任务的 deletable=False 和 action 正确
+            existing = existing_selfcheck
+            if existing:
+                changed = False
+                if existing.deletable:
+                    existing.deletable = False
+                    changed = True
+                if not existing.action:
+                    existing.action = "system:daily_selfcheck"
+                    changed = True
+                if changed:
+                    task_scheduler._save_tasks()
         
         logger.info("OpenAkita Server initialized successfully.")
         
@@ -620,6 +769,69 @@ async def get_diary(date: str):
         content = f.read()
     return {"date": date, "content": content}
 
+# ─── Memory API ───────────────────────────────────────────────────────────────
+
+class MemoryCreateRequest(BaseModel):
+    content: str
+    type: Optional[str] = "fact"
+    tags: Optional[list] = []
+
+class MemoryUpdateRequest(BaseModel):
+    content: Optional[str] = None
+    type: Optional[str] = None
+    tags: Optional[list] = None
+
+@app.get("/api/memory")
+async def list_memory(type: Optional[str] = None, q: Optional[str] = None):
+    """Return memory items, optionally filtered by type or keyword."""
+    agent = app_state.get("agent")
+    if not agent or not agent.memory:
+        return {"memories": []}
+    if type:
+        items = agent.memory.list_by_type(type)
+    else:
+        items = agent.memory.list_all()
+    if q:
+        q_lower = q.lower()
+        items = [m for m in items if q_lower in m.content.lower()]
+    return {"memories": [m.to_dict() for m in items]}
+
+@app.post("/api/memory")
+async def create_memory(req: MemoryCreateRequest):
+    """Create a new memory item."""
+    agent = app_state.get("agent")
+    if not agent or not agent.memory:
+        raise HTTPException(status_code=503, detail="Memory not available")
+    item = agent.memory.add(req.content, tags=req.tags, type=req.type)
+    return {"memory": item.to_dict()}
+
+@app.delete("/api/memory/{memory_id}")
+async def delete_memory(memory_id: str):
+    """Delete a memory item by ID."""
+    agent = app_state.get("agent")
+    if not agent or not agent.memory:
+        raise HTTPException(status_code=503, detail="Memory not available")
+    ok = agent.memory.delete(memory_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"ok": True}
+
+@app.put("/api/memory/{memory_id}")
+async def update_memory(memory_id: str, req: MemoryUpdateRequest):
+    """Update a memory item's content, type, or tags."""
+    agent = app_state.get("agent")
+    if not agent or not agent.memory:
+        raise HTTPException(status_code=503, detail="Memory not available")
+    ok = agent.memory.update(
+        memory_id,
+        new_content=req.content,
+        new_tags=req.tags,
+        new_type=req.type,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"ok": True}
+
 @app.get("/api/persona")
 async def get_persona():
     """Return a readable summary of persona (PERSONA.md + identities)."""
@@ -870,38 +1082,326 @@ async def reload_skills():
         raise HTTPException(status_code=500, detail="Agent not initialized")
     
     try:
-        # Reload skill modules
         import importlib
-        from skills import basic, autogui, web_search
-        
+        from skills import basic, autogui, office_tools, web_reader, system_tools, file_manager
+
+        # Reload core skill modules
         importlib.reload(basic)
         importlib.reload(autogui)
-        importlib.reload(web_search)
-        
-        # Re-register skills
+        importlib.reload(office_tools)
+        importlib.reload(web_reader)
+        importlib.reload(system_tools)
+        importlib.reload(file_manager)
+
+        # Re-register core skills
         agent.skills._registry.clear()
+        
+        # Re-register built-in bounds
+        if hasattr(agent, "_register_builtins"):
+            agent._register_builtins()
+        if hasattr(agent, "_build_builtin_skills"):
+            agent._build_builtin_skills()
+            
+        # Re-register core skills modules
         agent.register_skill_module(basic)
         agent.register_skill_module(autogui)
-        agent.register_skill_module(web_search)
-        
+        agent.register_skill_module(office_tools)
+        agent.register_skill_module(web_reader)
+        agent.register_skill_module(system_tools)
+        agent.register_skill_module(file_manager)
+
+        # Re-register plugin skills so the count matches startup
+        plugin_manager = app_state.get("plugin_manager")
+        if plugin_manager:
+            plugin_manager.reload_all()
+
         return {"status": "success", "message": "Skills reloaded successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to reload skills: {str(e)}")
 
-@app.get("/api/token-stats")
-async def get_token_stats():
-    """Return cumulative token usage statistics."""
+# ─── Skills Marketplace Proxy ────────────────────────────────────────────────────
+_marketplace_cache: dict = {}   # key: query  →  (timestamp, data)
+_MARKETPLACE_CACHE_TTL = 60     # seconds
+
+@app.get("/api/skills/marketplace")
+async def skills_marketplace(q: str = "agent"):
+    """Proxy requests to skills.sh to avoid CORS issues in browser.
+    Results are cached for 60 seconds per query to minimise external API calls.
+    """
+    import time
+
+    # ── Try to import httpx; auto‑install if missing ──
+    try:
+        import httpx
+    except ImportError:
+        import subprocess, sys
+        subprocess.run([sys.executable, "-m", "pip", "install", "httpx", "-q"], check=False)
+        try:
+            import httpx
+        except ImportError:
+            return {"skills": [], "error": "httpx not available; could not install automatically"}
+
+    # ── Cache lookup ──
+    cache_key = q.strip().lower()
+    now = time.time()
+    if cache_key in _marketplace_cache:
+        ts, cached_data = _marketplace_cache[cache_key]
+        if now - ts < _MARKETPLACE_CACHE_TTL:
+            return cached_data
+
+    agent = app_state.get("agent")
+
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            url = f"https://skills.sh/api/search?q={q}"
+            resp = await client.get(url, headers={"User-Agent": "openGuiclaw/1.0"})
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        # Return empty list instead of erroring so UI degrades gracefully
+        return {"skills": [], "error": str(e)}
+
+    # ── Enrich with "installed" status ──
+    installed_urls: set = set()
+    if agent:
+        for skill in agent.skills._registry.values():
+            src = getattr(skill, "source_url", None) or getattr(skill, "sourceUrl", None)
+            if src:
+                installed_urls.add(src)
+
+    raw_skills = data.get("skills", [])
+    enriched = []
+    for s in raw_skills:
+        source = str(s.get("source", ""))
+        skill_id = str(s.get("skillId", s.get("name", "")))
+        install_url = f"{source}@{skill_id}" if source else skill_id
+        
+        # Fallback description since API often returns null for list items
+        description = s.get("description")
+        if not description:
+            # Create a pretty title from the ID (e.g. vercel-react-native -> Vercel React Native)
+            description = skill_id.replace("-", " ").replace("_", " ").title()
+            
+        # Refine tags
+        tags: list = list(s.get("tags", []) or [])
+        if not tags:
+            # Extract author as a tag
+            if "/" in source:
+                author = source.split("/")[0]
+                if author not in tags: tags.append(author)
+            # Add category if exists
+            cat = s.get("category")
+            if cat and cat not in tags: tags.append(cat.lower())
+        
+        enriched.append({
+            "id": str(s.get("id", "")),
+            "name": skill_id,
+            "description": str(description),
+            "author": source.split("/")[0] if source else "community",
+            "url": install_url,
+            "installs": s.get("installs", 0),
+            "stars": s.get("stars", 0),
+            "tags": tags,
+            "installed": install_url in installed_urls,
+        })
+
+    result = {"skills": enriched}
+    _marketplace_cache[cache_key] = (now, result)
+    return result
+
+# ─── Skill Install ────────────────────────────────────────────────────────────────
+class SkillInstallRequest(BaseModel):
+    url: str
+    name: str = ""
+
+@app.post("/api/skills/install")
+async def install_skill(request: SkillInstallRequest):
+    """Install a skill from a URL via pip or skills.sh CLI."""
+    import subprocess, sys, shlex
     agent = app_state.get("agent")
     if not agent:
         raise HTTPException(status_code=500, detail="Agent not initialized")
-    return agent.token_stats
+
+    url = request.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is required")
+
+    # Determine install source - support GitHub URLs, skills.sh IDs, and pip packages
+    if url.startswith("http://") or url.startswith("https://"):
+        pip_url = f"git+{url}"
+    elif "/" in url and not url.startswith("git+"):
+        # skills.sh format: "source@skillId" or "username/repo"
+        pip_url = f"git+https://github.com/{url}"
+    else:
+        pip_url = url  # plain package name
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", pip_url, "--quiet"],
+            capture_output=True, text=True, timeout=120
+        )
+        if result.returncode != 0:
+            raise Exception(result.stderr or result.stdout or "pip install failed")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=500, detail="Installation timed out (>120s)")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Installation failed: {e}")
+
+    # Hot-reload after install
+    try:
+        if hasattr(agent, "_register_builtins"):
+            agent._register_builtins()
+        if hasattr(agent, "_build_builtin_skills"):
+            agent._build_builtin_skills()
+        plugin_manager = app_state.get("plugin_manager")
+        if plugin_manager:
+            plugin_manager.reload_all()
+    except Exception:
+        pass  # Reload failure shouldn't block success response
+
+    return {
+        "status": "success",
+        "message": f"Skill installed from {url}",
+        "source_url": url
+    }
+
+# ─── Skill Uninstall ─────────────────────────────────────────────────────────────
+class SkillUninstallRequest(BaseModel):
+    name: str
+
+@app.post("/api/skills/uninstall")
+async def uninstall_skill(request: SkillUninstallRequest):
+    """Uninstall an external skill by name."""
+    import subprocess, sys
+    agent = app_state.get("agent")
+    if not agent:
+        raise HTTPException(status_code=500, detail="Agent not initialized")
+
+    skill = agent.skills.get(request.name)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Skill '{request.name}' not found")
+
+    source_url = getattr(skill, "source_url", None)
+    if not source_url:
+        raise HTTPException(status_code=400, detail=f"Skill '{request.name}' is a built-in skill and cannot be uninstalled")
+
+    # Determine package name to uninstall
+    pkg_name = request.name.replace("_", "-")
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "uninstall", pkg_name, "-y", "--quiet"],
+            capture_output=True, text=True, timeout=60
+        )
+        # Don't fail if pip can't find it by name - the skill files may need manual removal
+    except Exception as e:
+        logger.warning(f"pip uninstall warning for {pkg_name}: {e}")
+
+    # Remove from registry
+    try:
+        if request.name in agent.skills._registry:
+            del agent.skills._registry[request.name]
+    except Exception as e:
+        logger.warning(f"Failed to remove {request.name} from registry: {e}")
+
+    return {"status": "success", "message": f"Skill '{request.name}' uninstalled"}
+
+@app.get("/api/token-stats")
+async def get_token_stats(period: str = "all"):
+    """Return token usage statistics.
+
+    period: all | 1天 | 3天 | 1周 | 1月 | 6月 | 1年
+    Returns aggregated totals + per-model breakdown for the given period.
+    """
+    import sqlite3
+    from datetime import datetime, timedelta
+
+    agent = app_state.get("agent")
+    if not agent:
+        raise HTTPException(status_code=500, detail="Agent not initialized")
+
+    # Build time filter
+    delta_map = {
+        "1d": timedelta(days=1),
+        "3d": timedelta(days=3),
+        "1w": timedelta(weeks=1),
+        "1m": timedelta(days=30),
+        "6m": timedelta(days=180),
+        "1y": timedelta(days=365),
+    }
+    where_clause = ""
+    params: list = []
+    if period in delta_map:
+        since = (datetime.now() - delta_map[period]).strftime("%Y-%m-%d %H:%M:%S")
+        where_clause = "WHERE timestamp >= ?"
+        params = [since]
+
+    try:
+        with sqlite3.connect(agent._token_db_path) as conn:
+            # Totals
+            row = conn.execute(
+                f"SELECT SUM(prompt_tokens), SUM(completion_tokens), SUM(total_tokens), COUNT(*) "
+                f"FROM token_usage {where_clause}",
+                params,
+            ).fetchone()
+            total_p, total_c, total_t, total_req = (row[0] or 0, row[1] or 0, row[2] or 0, row[3] or 0)
+
+            # Per-model
+            model_rows = conn.execute(
+                f"SELECT model, SUM(prompt_tokens), SUM(completion_tokens), SUM(total_tokens), COUNT(*) "
+                f"FROM token_usage {where_clause} GROUP BY model",
+                params,
+            ).fetchall()
+            by_model = {
+                r[0]: {"prompt": r[1] or 0, "completion": r[2] or 0, "total": r[3] or 0, "count": r[4] or 0}
+                for r in model_rows
+            }
+
+            # Timeline: hourly buckets for 1d/3d, daily for others
+            if period in ("1d", "3d"):
+                bucket_fmt = "%Y-%m-%d %H:00"
+                sqlite_fmt = "strftime('%Y-%m-%d %H:00', timestamp)"
+            else:
+                bucket_fmt = "%Y-%m-%d"
+                sqlite_fmt = "strftime('%Y-%m-%d', timestamp)"
+
+            tl_rows = conn.execute(
+                f"SELECT {sqlite_fmt} as bucket, SUM(prompt_tokens), SUM(completion_tokens), SUM(total_tokens) "
+                f"FROM token_usage {where_clause} GROUP BY bucket ORDER BY bucket",
+                params,
+            ).fetchall()
+            timeline = [
+                {"time": r[0], "prompt": r[1] or 0, "completion": r[2] or 0, "total": r[3] or 0}
+                for r in tl_rows
+            ]
+    except Exception as e:
+        # Fallback to in-memory stats if DB unavailable
+        return agent.token_stats
+
+    return {
+        "period": period,
+        "total_prompt_tokens": total_p,
+        "total_completion_tokens": total_c,
+        "total_tokens": total_t,
+        "request_count": total_req,
+        "by_model": by_model,
+        "timeline": timeline,
+    }
+
 
 @app.post("/api/token-stats/reset")
 async def reset_token_stats():
-    """Reset token usage counters to zero."""
+    """Reset token usage counters to zero (truncates DB table)."""
+    import sqlite3
+
     agent = app_state.get("agent")
     if not agent:
         raise HTTPException(status_code=500, detail="Agent not initialized")
+    try:
+        with sqlite3.connect(agent._token_db_path) as conn:
+            conn.execute("DELETE FROM token_usage")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reset failed: {e}")
     agent.token_stats = {
         "total_prompt_tokens": 0,
         "total_completion_tokens": 0,
@@ -911,4 +1411,483 @@ async def reset_token_stats():
     }
     return {"status": "ok"}
 
+
+# ─── Model Endpoint Configuration API ────────────────────────────────────────
+
+# Built-in provider presets (matching openakita's registry style)
+_BUILTIN_PROVIDERS = [
+    # ── 💻 编程专用端点 (Coding Plans) ─────────────────────────────────────────
+    {
+        "slug": "dashscope-coding", "name": "阿里云 DashScope (Coding)", "category": "coding",
+        "api_type": "openai", "base_url": "https://coding.dashscope.aliyuncs.com/v1",
+        "key_hint": "DASHSCOPE_API_KEY", "is_local": False,
+        "desc": "阿里编程专版，适配 AutoGUI 与代码生成",
+        "models": ["qwen3.5-plus", "qwen3-max"],
+    },
+    {
+        "slug": "kimi-coding", "name": "Kimi (Coding)", "category": "coding",
+        "api_type": "anthropic", "base_url": "https://api.kimi.com/coding/",
+        "key_hint": "KIMI_API_KEY", "is_local": False,
+        "desc": "Kimi 编程专版 (Anthropic 协议适配)",
+        "models": ["kimi-k2.5", "kimi-k2"],
+    },
+    {
+        "slug": "minimax-coding", "name": "MiniMax (Coding)", "category": "coding",
+        "api_type": "anthropic", "base_url": "https://api.minimaxi.com/anthropic",
+        "key_hint": "MINIMAX_API_KEY", "is_local": False,
+        "desc": "MiniMax 编程专版 (Anthropic 协议适配)",
+        "models": ["minimax-m2.5", "minimax-m2"],
+    },
+    {
+        "slug": "zhipu-coding", "name": "智谱 ZhipuAI (Coding)", "category": "coding",
+        "api_type": "anthropic", "base_url": "https://open.bigmodel.cn/api/anthropic",
+        "key_hint": "ZHIPU_API_KEY", "is_local": False,
+        "desc": "智谱编程专版 (Anthropic 协议适配)",
+        "models": ["glm-4-plus", "glm-5"],
+    },
+    {
+        "slug": "volcengine-coding", "name": "火山方舟 (Coding)", "category": "coding",
+        "api_type": "anthropic", "base_url": "https://ark.cn-beijing.volces.com/api/coding",
+        "key_hint": "ARK_API_KEY", "is_local": False,
+        "desc": "火山引擎编程专版 (Anthropic 协议适配)",
+        "models": ["doubao-1.5-pro-256k", "doubao-seed-1-6"],
+    },
+    # ── 🇨🇳 国内官方服务商 ───────────────────────────────────────────────────────
+    {
+        "slug": "dashscope",    "name": "阿里云 DashScope",  "category": "cn_official",
+        "api_type": "openai",   "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "key_hint": "DASHSCOPE_API_KEY", "is_local": False,
+        "desc": "通义千问官方端点，支持全系列模型",
+        "models": ["qwen3.5-plus", "qwen3-max", "qwen-plus", "qwen-turbo", "qwen-vl-max", "text-embedding-v4"],
+    },
+    {
+        "slug": "zhipu",  "name": "智谱 ZhipuAI",  "category": "cn_official",
+        "api_type": "openai", "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "key_hint": "ZHIPU_API_KEY", "is_local": False,
+        "desc": "GLM 系列官方端点",
+        "models": ["glm-4-plus", "glm-4v-plus", "glm-5", "glm-4-air", "glm-4-flash"],
+    },
+    {
+        "slug": "moonshot", "name": "Kimi (月之暗面)",  "category": "cn_official",
+        "api_type": "openai", "base_url": "https://api.moonshot.cn/v1",
+        "key_hint": "MOONSHOT_API_KEY", "is_local": False,
+        "desc": "Kimi 官方标准端点",
+        "models": ["kimi-k2.5", "kimi-k2", "moonshot-v1-128k"],
+    },
+    {
+        "slug": "minimax", "name": "MiniMax",  "category": "cn_official",
+        "api_type": "openai", "base_url": "https://api.minimax.chat/v1",
+        "key_hint": "MINIMAX_API_KEY", "is_local": False,
+        "desc": "MiniMax 官方标准端点",
+        "models": ["minimax-m2.5", "minimax-m2", "abab6.5s-chat"],
+    },
+    # ── 🌐 国际官方服务商 ───────────────────────────────────────────────────────
+    {
+        "slug": "openai", "name": "OpenAI",  "category": "intl_official",
+        "api_type": "openai", "base_url": "https://api.openai.com/v1",
+        "key_hint": "OPENAI_API_KEY", "is_local": False,
+        "desc": "GPT-4o / o1 官方端点",
+        "models": ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"],
+    },
+    {
+        "slug": "anthropic", "name": "Anthropic",  "category": "intl_official",
+        "api_type": "anthropic", "base_url": "https://api.anthropic.com",
+        "key_hint": "ANTHROPIC_API_KEY", "is_local": False,
+        "desc": "Claude 3.5 系列官方端点",
+        "models": ["claude-opus-4.5", "claude-sonnet-4.5", "claude-haiku-4.5", "claude-3-5-sonnet"],
+    },
+    {
+        "slug": "google", "name": "Google Gemini",  "category": "intl_official",
+        "api_type": "openai", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "key_hint": "GOOGLE_API_KEY", "is_local": False,
+        "desc": "Gemini 系列官方端点",
+        "models": ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
+    },
+    {
+        "slug": "deepseek", "name": "DeepSeek",  "category": "intl_official",
+        "api_type": "openai", "base_url": "https://api.deepseek.com/v1",
+        "key_hint": "DEEPSEEK_API_KEY", "is_local": False,
+        "desc": "DeepSeek 官方低价端点",
+        "models": ["deepseek-chat", "deepseek-reasoner"],
+    },
+    # ── 🔀 中转/聚合服务商 ────────────────────────────────────────────────────
+    {
+        "slug": "siliconflow", "name": "SiliconFlow",  "category": "relay",
+        "api_type": "openai", "base_url": "https://api.siliconflow.cn/v1",
+        "key_hint": "SILICONFLOW_API_KEY", "is_local": False,
+        "desc": "硅基流动，低价开源模型中转",
+        "models": ["deepseek-ai/DeepSeek-V3", "deepseek-ai/DeepSeek-R1", "Qwen/Qwen3-235B-A22B"],
+    },
+    {
+        "slug": "openrouter", "name": "OpenRouter",  "category": "relay",
+        "api_type": "openai", "base_url": "https://openrouter.ai/api/v1",
+        "key_hint": "OPENROUTER_API_KEY", "is_local": False,
+        "desc": "国际顶级模型聚合平台",
+        "models": ["openai/gpt-4o", "anthropic/claude-3-5-sonnet", "meta-llama/llama-3.3-70b-instruct"],
+    },
+    # ── 💻 本地模型 ──────────────────────────────────────────────────────────
+    {
+        "slug": "ollama", "name": "Ollama (本地)",  "category": "local",
+        "api_type": "openai", "base_url": "http://localhost:11434/v1",
+        "key_hint": "", "is_local": True,
+        "desc": "本地开源模型推理",
+        "models": ["llama3.1:8b", "qwen2.5:7b", "deepseek-r1:8b"],
+    },
+]
+
+# Endpoint role definitions
+_ENDPOINT_ROLES = [
+    {"key": "api",            "label": "主模型",    "desc": "主要对话与工具调用",             "icon": "🧠"},
+    {"key": "vision",         "label": "视觉模型",  "desc": "屏幕截图分析与主动感知",          "icon": "👁"},
+    {"key": "image_analyzer", "label": "图像解析",  "desc": "用户上传图片智能解读",            "icon": "🖼"},
+    {"key": "embedding",      "label": "嵌入模型",  "desc": "向量语义检索与记忆",             "icon": "🔢"},
+    {"key": "autogui",        "label": "GUI 操作",  "desc": "屏幕自动化与界面交互",           "icon": "🤖"},
+]
+
+
+class ModelEndpointWrite(BaseModel):
+    role: str      # "api" | "vision" | "image_analyzer" | "embedding" | "autogui"
+    base_url: str
+    api_key: str
+    model: str
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    context_window: Optional[int] = None
+
+
+@app.get("/api/config/model/providers")
+async def get_model_providers():
+    """Return built-in provider presets for the LLM configuration UI."""
+    return {"providers": _BUILTIN_PROVIDERS, "roles": _ENDPOINT_ROLES}
+
+
+@app.get("/api/config/model")
+async def get_model_config():
+    """Read current model endpoint configuration from config.json."""
+    cfg_path = Path("config.json")
+    if not cfg_path.exists():
+        return {"config": {}, "error": "config.json not found"}
+    try:
+        with open(cfg_path, encoding="utf-8") as f:
+            full = json.load(f)
+        # Return only model-related sections, masking API keys
+        result = {}
+        for role_def in _ENDPOINT_ROLES:
+            key = role_def["key"]
+            section = full.get(key, {})
+            if section:
+                # Mask api_key for display
+                api_key = section.get("api_key", "")
+                masked_key = (api_key[:4] + "***" + api_key[-2:]) if len(api_key) > 6 else ("***" if api_key else "")
+                result[key] = {
+                    "base_url": section.get("base_url", ""),
+                    "api_key": api_key,          # full key for editing
+                    "api_key_masked": masked_key, # masked for display
+                    "model": section.get("model", ""),
+                    "max_tokens": section.get("max_tokens"),
+                    "temperature": section.get("temperature"),
+                    "context_window": section.get("context_window"),
+                    "configured": bool(section.get("api_key") and section.get("model")),
+                }
+            else:
+                result[key] = {"configured": False}
+        return {"config": result}
+    except Exception as e:
+        return {"config": {}, "error": str(e)}
+
+
+@app.post("/api/config/model")
+async def set_model_config(body: ModelEndpointWrite):
+    """Write an endpoint role's config to config.json and hot-reload the agent client."""
+    valid_roles = {r["key"] for r in _ENDPOINT_ROLES}
+    if body.role not in valid_roles:
+        raise HTTPException(status_code=400, detail=f"Invalid role: {body.role}")
+
+    cfg_path = Path("config.json")
+    if not cfg_path.exists():
+        raise HTTPException(status_code=404, detail="config.json not found")
+
+    try:
+        with open(cfg_path, encoding="utf-8") as f:
+            full = json.load(f)
+
+        if body.role not in full:
+            full[body.role] = {}
+
+        section = full[body.role]
+        section["base_url"] = body.base_url
+        section["api_key"] = body.api_key
+        section["model"] = body.model
+        if body.max_tokens is not None:
+            section["max_tokens"] = body.max_tokens
+        if body.temperature is not None:
+            section["temperature"] = body.temperature
+        if body.context_window is not None:
+            section["context_window"] = body.context_window
+
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(full, f, ensure_ascii=False, indent=2)
+
+        # Hot-reload: update the running agent's client/model
+        agent = app_state.get("agent")
+        if agent:
+            from openai import OpenAI
+            new_client = OpenAI(base_url=body.base_url, api_key=body.api_key)
+            if body.role == "api":
+                agent.client = new_client
+                agent.model = body.model
+                if body.max_tokens:
+                    agent.max_tokens = body.max_tokens
+                if body.temperature:
+                    agent.temperature = body.temperature
+                if body.context_window:
+                    agent.context_window = body.context_window
+                logger.info(f"[ModelConfig] Hot-reloaded main model → {body.model}")
+            elif body.role == "vision":
+                agent.vision_client = new_client
+                agent.vision_model = body.model
+                logger.info(f"[ModelConfig] Hot-reloaded vision model → {body.model}")
+            elif body.role == "image_analyzer":
+                agent.image_analyzer_client = new_client
+                agent.image_analyzer_model = body.model
+                logger.info(f"[ModelConfig] Hot-reloaded image_analyzer model → {body.model}")
+            elif body.role == "autogui":
+                # autogui client is accessed via app_state
+                app_state["autogui_client"] = new_client
+                app_state["autogui_model"] = body.model
+                logger.info(f"[ModelConfig] Hot-reloaded autogui model → {body.model}")
+            # embedding: requires restart due to VectorStore init chain
+
+        return {"status": "ok", "role": body.role, "model": body.model, "hot_reloaded": agent is not None}
+    except Exception as e:
+        logger.error(f"[ModelConfig] Save failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/config/model/test")
+async def test_model_endpoint(body: ModelEndpointWrite):
+    """Test a model endpoint by sending a minimal probe request."""
+    try:
+        from openai import OpenAI
+        client = OpenAI(base_url=body.base_url, api_key=body.api_key or "test")
+        # Send a minimal single-token request to validate connectivity
+        resp = client.chat.completions.create(
+            model=body.model,
+            messages=[{"role": "user", "content": "Hi, reply with a single word: OK"}],
+            max_tokens=8,
+            timeout=12,
+        )
+        reply = resp.choices[0].message.content if resp.choices else ""
+        return {"status": "ok", "reply": reply, "model": body.model}
+    except Exception as e:
+        raw = str(e).lower()
+        if "401" in raw or "unauthorized" in raw or "invalid_api_key" in raw or "authentication" in raw:
+            friendly = "API Key 无效或已过期"
+        elif "403" in raw or "permission" in raw or "forbidden" in raw:
+            friendly = "API Key 权限不足，请确认已开通该模型的访问权限"
+        elif "404" in raw or "not found" in raw:
+            friendly = "模型不存在，请检查模型名称是否正确"
+        elif "connect" in raw or "connection" in raw or "network" in raw or "timeout" in raw:
+            friendly = "无法连接到服务商，请检查 base_url 和网络状态"
+        else:
+            friendly = str(e)[:120]
+        return {"status": "error", "error": friendly}
+
+
 # To run: uvicorn core.server:app --host 127.0.0.1 --port 8000
+
+
+# ── Chat Endpoints Management ──────────────────────────────────────────────────
+
+import uuid as _uuid
+
+
+class ChatEndpointItem(BaseModel):
+    id: Optional[str] = None               # UUID; auto-generated if missing
+    name: str                              # display name e.g. "DashScope Qwen"
+    provider: Optional[str] = "custom"    # slug from _BUILTIN_PROVIDERS
+    base_url: str
+    api_key: str
+    model: str
+    max_tokens: Optional[int] = 8000
+    temperature: Optional[float] = 0.7
+    capabilities: Optional[list] = None   # e.g. ["text","tools","vision"]
+    note: Optional[str] = ""
+
+
+class ChatEndpointActiveSwitch(BaseModel):
+    id: str   # endpoint id to activate
+
+
+@app.get("/api/endpoints")
+async def list_chat_endpoints():
+    """Return all saved chat endpoints + active endpoint id."""
+    cfg_path = Path("config.json")
+    if not cfg_path.exists():
+        return {"endpoints": [], "active_id": None}
+    try:
+        with open(cfg_path, encoding="utf-8") as f:
+            full = json.load(f)
+        endpoints = full.get("chat_endpoints", [])
+        active_id = full.get("active_chat_endpoint_id", None)
+        
+        # Legacy compatibility: migration from single 'api' key
+        if not endpoints and "api" in full:
+            api_cfg = full["api"]
+            default_ep = {
+                "id": "default",
+                "name": "主模型 (默认)",
+                "provider": "custom",
+                "base_url": api_cfg.get("base_url", ""),
+                "api_key": api_cfg.get("api_key", ""),
+                "model": api_cfg.get("model", ""),
+                "max_tokens": api_cfg.get("max_tokens", 8000),
+                "temperature": api_cfg.get("temperature", 0.7),
+                "capability": ["text"]
+            }
+            endpoints = [default_ep]
+            if not active_id:
+                active_id = "default"
+        # Mask API keys in output
+        masked = []
+        for ep in endpoints:
+            ep2 = dict(ep)
+            k = ep2.get("api_key", "")
+            ep2["api_key"] = k  # return full key for editing
+            ep2["api_key_masked"] = (k[:4] + "***" + k[-2:]) if len(k) > 6 else ("***" if k else "")
+            masked.append(ep2)
+        return {"endpoints": masked, "active_id": active_id}
+    except Exception as e:
+        return {"endpoints": [], "active_id": None, "error": str(e)}
+
+
+@app.post("/api/endpoints")
+async def save_chat_endpoints(body: list[ChatEndpointItem]):
+    """Save the full chat endpoints list to config.json."""
+    cfg_path = Path("config.json")
+    if not cfg_path.exists():
+        raise HTTPException(status_code=404, detail="config.json not found")
+    try:
+        with open(cfg_path, encoding="utf-8") as f:
+            full = json.load(f)
+
+        # Auto-assign UUIDs
+        result = []
+        for ep in body:
+            d = ep.model_dump()
+            if not d.get("id"):
+                d["id"] = str(_uuid.uuid4())[:8]
+            result.append(d)
+
+        full["chat_endpoints"] = result
+
+        # If no active_id set yet, or active ID no longer exists, pick first
+        active_id = full.get("active_chat_endpoint_id")
+        ids = [e["id"] for e in result]
+        if not active_id or active_id not in ids:
+            full["active_chat_endpoint_id"] = ids[0] if ids else None
+
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(full, f, ensure_ascii=False, indent=2)
+
+        return {"status": "ok", "count": len(result), "active_id": full.get("active_chat_endpoint_id")}
+    except Exception as e:
+        logger.error(f"[ChatEndpoints] Save failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/endpoints/active")
+async def switch_active_endpoint(body: ChatEndpointActiveSwitch):
+    """Switch the active chat endpoint and hot-reload the running agent."""
+    cfg_path = Path("config.json")
+    if not cfg_path.exists():
+        raise HTTPException(status_code=404, detail="config.json not found")
+    try:
+        with open(cfg_path, encoding="utf-8") as f:
+            full = json.load(f)
+
+        endpoints = full.get("chat_endpoints", [])
+        target = next((e for e in endpoints if e.get("id") == body.id), None)
+        if not target:
+            raise HTTPException(status_code=404, detail=f"Endpoint id={body.id!r} not found")
+
+        full["active_chat_endpoint_id"] = body.id
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(full, f, ensure_ascii=False, indent=2)
+
+        # Hot-reload agent main client
+        agent = app_state.get("agent")
+        if agent:
+            from openai import OpenAI
+            new_client = OpenAI(base_url=target["base_url"], api_key=target["api_key"])
+            agent.client = new_client
+            agent.model = target["model"]
+            if target.get("max_tokens"):
+                agent.max_tokens = target["max_tokens"]
+            if target.get("temperature"):
+                agent.temperature = target["temperature"]
+            logger.info(f"[ChatEndpoints] Switched active endpoint → {target['name']} ({target['model']})")
+
+        return {
+            "status": "ok",
+            "active_id": body.id,
+            "name": target["name"],
+            "model": target["model"],
+            "hot_reloaded": agent is not None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[ChatEndpoints] Switch failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Role Extra Endpoints ──────────────────────────────────────────────────────
+class RoleEndpointsWrite(BaseModel):
+    role: str                # e.g. "vision", "embedding", "autogui", "image_analyzer"
+    endpoints: list          # list of endpoint dicts
+
+
+@app.get("/api/config/role-endpoints")
+async def get_role_endpoints():
+    """Return all extra role-specific endpoints from config.json."""
+    cfg_path = Path("config.json")
+    if not cfg_path.exists():
+        return {"role_extra_endpoints": {}}
+    try:
+        with open(cfg_path, encoding="utf-8") as f:
+            full = json.load(f)
+        return {"role_extra_endpoints": full.get("role_extra_endpoints", {})}
+    except Exception as e:
+        return {"role_extra_endpoints": {}, "error": str(e)}
+
+
+@app.post("/api/config/role-endpoints")
+async def save_role_endpoints(body: RoleEndpointsWrite):
+    """Save extra endpoint list for a specific functional role to config.json."""
+    cfg_path = Path("config.json")
+    if not cfg_path.exists():
+        raise HTTPException(status_code=404, detail="config.json not found")
+    try:
+        with open(cfg_path, encoding="utf-8") as f:
+            full = json.load(f)
+
+        if "role_extra_endpoints" not in full:
+            full["role_extra_endpoints"] = {}
+
+        # Strip internal _new flag before saving
+        clean = []
+        for ep in body.endpoints:
+            d = dict(ep) if isinstance(ep, dict) else ep
+            d.pop("_new", None)
+            clean.append(d)
+
+        full["role_extra_endpoints"][body.role] = clean
+
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(full, f, ensure_ascii=False, indent=2)
+
+        return {"status": "ok", "role": body.role, "count": len(clean)}
+    except Exception as e:
+        logger.error(f"[RoleEndpoints] Save failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

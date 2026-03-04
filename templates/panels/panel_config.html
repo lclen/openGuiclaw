@@ -1,126 +1,569 @@
 <!-- Global System Settings Panel -->
-<div x-show="activePanel === 'config'" class="flex flex-col h-full">
-    <div class="px-4 py-3 border-b border-white/10">
-        <p class="text-white font-semibold text-sm">系统配置</p>
-        <p class="text-white/40 text-xs mt-0.5">运行环境与浏览器偏好设置</p>
-    </div>
-    <div class="flex-1 overflow-y-auto custom-scrollbar px-4 py-3 gap-3">
+<div x-show="activePanel === 'config'"
+    class="flex flex-col h-full bg-[var(--noble-black-900)]/60 backdrop-blur-3xl selection:bg-[var(--stem-green-500)]/30"
+    x-data="{ cfgTab: 'models', showKey: {} }">
 
-        <!-- Browser Selection -->
-        <div class="mb-6">
-            <p class="text-blue-300 text-xs font-semibold mb-2">默认浏览器</p>
-            <div class="flex gap-2 p-1 bg-white/5 rounded-xl border border-white/10">
-                <button @click="updateBrowserSetting('edge')"
-                    :class="config.browser_choice === 'edge' ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' : 'text-white/40 hover:text-white/60 border-transparent'"
-                    class="flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all border flex items-center justify-center gap-2">
-                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z" />
-                        <path d="M12 6a6 6 0 1 0 6 6 6 6 0 0 0-6-6zm0 10a4 4 0 1 1 4-4 4 4 0 0 1-4 4z" />
+    <style>
+        .config-card {
+            transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+
+        .config-card:hover {
+            border-color: rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.03);
+            transform: translateY(-1px);
+        }
+
+        .config-input {
+            transition: all 0.2s ease;
+        }
+
+        .config-input:focus {
+            box-shadow: 0 0 0 2px rgba(182, 240, 89, 0.1);
+        }
+
+        .primary-glow {
+            box-shadow: 0 0 12px rgba(182, 240, 89, 0.15);
+        }
+
+        [x-cloak] {
+            display: none !important;
+        }
+
+        /* Custom Transition for Collapsibles */
+        .collapse-enter {
+            max-height: 0;
+            opacity: 0;
+            transform: translateY(-5px);
+        }
+
+        .collapse-enter-end {
+            max-height: 1000px;
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .collapse-leave {
+            max-height: 1000px;
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .collapse-leave-end {
+            max-height: 0;
+            opacity: 0;
+            transform: translateY(-5px);
+        }
+    </style>
+
+    <!-- Header Area -->
+    <div class="px-6 py-4 border-b border-white/5 bg-black/40 shrink-0">
+        <div class="flex items-center justify-between">
+            <div>
+                <h2 class="text-[15px] font-bold text-white tracking-tight font-['Outfit'] flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-[var(--stem-green-500)] primary-glow"></span>
+                    系统核心配置
+                </h2>
+                <p class="text-[var(--noble-black-400)] text-[11px] font-medium mt-0.5">管理模型接入端点、感知链路与交互预设</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="flex shrink-0 px-6 bg-black/20 border-b border-white/5">
+        <button @click="cfgTab = 'models'"
+            :class="cfgTab === 'models' ? 'text-white border-[var(--stem-green-500)]' : 'text-white/40 border-transparent hover:text-white/70'"
+            class="relative py-3 mr-6 text-[12px] font-bold uppercase tracking-widest transition-all border-b-2 font-['Outfit']">
+            模型接入
+        </button>
+        <button @click="cfgTab = 'system'"
+            :class="cfgTab === 'system' ? 'text-white border-[var(--stem-green-500)]' : 'text-white/40 border-transparent hover:text-white/70'"
+            class="relative py-3 text-[12px] font-bold uppercase tracking-widest transition-all border-b-2 font-['Outfit']">
+            系统环境
+        </button>
+    </div>
+
+    <!-- ══════════════════════════ TAB: 模型接入 ══════════════════════════ -->
+    <div x-show="cfgTab === 'models'" x-transition:enter="transition ease-out duration-200"
+        x-transition:enter-start="opacity-0 translate-y-2" class="flex-1 flex flex-col overflow-hidden">
+        <div class="flex-1 overflow-y-auto custom-scrollbar px-6 py-6 space-y-8">
+
+            <!-- section: 核心对话端点 -->
+            <div class="space-y-3">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2.5">
+                        <div class="p-1.5 rounded-lg bg-[var(--stem-green-500)]/10 text-[var(--stem-green-500)]">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-[13px] font-bold text-white font-['Outfit'] tracking-wide">聊天模型端点</h3>
+                            <p class="text-[10px] text-white/40 font-medium mt-0.5">配置核心对话、思维链及工具调用引擎</p>
+                        </div>
+                    </div>
+                    <button @click="addChatEndpoint()"
+                        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold bg-[var(--stem-green-500)] text-black hover:brightness-110 active:scale-95 transition-all shadow-md shadow-[var(--stem-green-500)]/10">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+                                d="M12 4v16m8-8H4" />
+                        </svg>
+                        新增端点
+                    </button>
+                </div>
+
+                <div class="grid gap-2.5">
+                    <template x-for="(ep, idx) in chatEndpoints" :key="ep.id || idx">
+                        <div class="config-card rounded-xl border border-white/5 bg-white/[0.02] overflow-hidden"
+                            x-data="{ open: ep._new || false, showKey: false }">
+
+                            <!-- Header -->
+                            <div @click="open = !open"
+                                class="flex items-center gap-3 px-4 py-3 cursor-pointer select-none">
+                                <div class="w-2 h-2 rounded-full shrink-0 transition-all duration-300"
+                                    :class="ep.id === activeEndpointId ? 'bg-[var(--stem-green-500)] primary-glow' : 'bg-white/10'">
+                                </div>
+
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center gap-2.5">
+                                        <span class="text-[13px] font-bold text-white truncate"
+                                            x-text="ep.name || '未命名端点'"></span>
+                                        <template x-if="ep.id === activeEndpointId">
+                                            <span
+                                                class="px-1.5 py-0.5 rounded mr-1 bg-[var(--stem-green-500)]/10 text-[var(--stem-green-500)] text-[9px] font-black uppercase tracking-tighter border border-[var(--stem-green-500)]/20">Active</span>
+                                        </template>
+                                    </div>
+                                    <div class="flex items-center gap-1.5 mt-0.5">
+                                        <span class="text-[10px] text-white/30 font-mono tracking-wide"
+                                            x-text="ep.provider || 'custom'"></span>
+                                        <span class="text-[10px] text-white/20">•</span>
+                                        <span class="text-[10px] text-white/50 font-medium truncate"
+                                            x-text="ep.model || '未选择模型'"></span>
+                                    </div>
+                                </div>
+
+                                <div class="flex items-center gap-2 shrink-0">
+                                    <button @click.stop="switchChatEndpoint(ep.id)"
+                                        x-show="ep.id && ep.id !== activeEndpointId"
+                                        class="px-2.5 py-1 rounded border text-[10px] font-bold text-white/60 bg-white/5 border-white/10 hover:bg-white/10 hover:text-white transition-all shadow-sm">
+                                        激活
+                                    </button>
+                                    <svg class="w-4 h-4 text-white/20 transition-transform duration-300 ml-1"
+                                        :class="open ? 'rotate-180 text-white/40' : ''" fill="none"
+                                        stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </div>
+                            </div>
+
+                            <!-- Body -->
+                            <div x-show="open" x-collapse class="border-t border-white/5 bg-black/20 p-5 space-y-4">
+
+                                <!-- Grid inputs -->
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div class="space-y-1.5">
+                                        <label
+                                            class="text-[10px] font-bold text-white/40 uppercase tracking-widest ml-1 font-['Outfit']">供应商服务</label>
+                                        <select
+                                            @change="applyEpPreset(idx, modelProviders.find(p=>p.slug===($event.target.value)))"
+                                            class="w-full h-9 px-3 bg-black/40 border border-white/10 rounded-lg text-white text-[12px] font-medium focus:outline-none focus:border-[var(--stem-green-500)]/50 transition-all appearance-none cursor-pointer">
+                                            <option value="">── 自定义 ──</option>
+                                            <template x-for="cat in [...new Set(modelProviders.map(p=>p.category))]"
+                                                :key="cat">
+                                                <optgroup
+                                                    :label="{ coding:'编程开发', cn_official:'国内官方', intl_official:'国际官方', relay:'聚合中转', local:'本地模型' }[cat] || cat">
+                                                    <template x-for="pv in modelProviders.filter(p=>p.category===cat)"
+                                                        :key="pv.slug">
+                                                        <option :value="pv.slug" :selected="ep.provider===pv.slug"
+                                                            x-text="pv.name"></option>
+                                                    </template>
+                                                </optgroup>
+                                            </template>
+                                        </select>
+                                    </div>
+                                    <div class="space-y-1.5">
+                                        <label
+                                            class="text-[10px] font-bold text-white/40 uppercase tracking-widest ml-1 font-['Outfit']">端点备注</label>
+                                        <input type="text" x-model="ep.name" placeholder="自定义名称"
+                                            class="config-input w-full h-9 px-3 bg-black/40 border border-white/10 rounded-lg text-white text-[12px] focus:border-[var(--stem-green-500)]/50 focus:outline-none">
+                                    </div>
+                                </div>
+
+                                <div class="space-y-1.5">
+                                    <label
+                                        class="text-[10px] font-bold text-white/40 uppercase tracking-widest ml-1 font-['Outfit']">Base
+                                        URL</label>
+                                    <input type="text" x-model="ep.base_url" placeholder="https://api..."
+                                        class="config-input w-full h-9 px-3 bg-black/40 border border-white/10 rounded-lg text-white text-[12px] font-mono focus:border-[var(--stem-green-500)]/50 focus:outline-none">
+                                </div>
+
+                                <div class="space-y-1.5">
+                                    <label
+                                        class="text-[10px] font-bold text-white/40 uppercase tracking-widest ml-1 font-['Outfit']">API
+                                        Key (Secrets)</label>
+                                    <div class="relative group">
+                                        <input :type="showKey ? 'text' : 'password'" x-model="ep.api_key"
+                                            placeholder="sk-..."
+                                            class="config-input w-full h-9 pl-3 pr-10 bg-black/40 border border-white/10 rounded-lg text-[var(--stem-green-500)] text-[12px] font-mono tracking-wider focus:border-[var(--stem-green-500)]/50 focus:outline-none">
+                                        <button @click="showKey = !showKey"
+                                            class="absolute right-3 top-1/2 -translate-y-1/2 text-white/20 hover:text-white transition-colors">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                    d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div class="space-y-1.5">
+                                    <label
+                                        class="text-[10px] font-bold text-white/40 uppercase tracking-widest ml-1 font-['Outfit']">Model
+                                        ID</label>
+                                    <input type="text" x-model="ep.model" placeholder="gpt-4o, claude..."
+                                        class="config-input w-full h-9 px-3 bg-black/40 border border-white/10 rounded-lg text-white text-[12px] font-bold font-mono focus:border-[var(--stem-green-500)]/50 focus:outline-none">
+
+                                    <!-- Quick Select Chips -->
+                                    <div x-show="modelProviders.find(p=>p.slug===ep.provider)?.models?.length"
+                                        class="flex flex-wrap gap-1.5 mt-2 p-0.5">
+                                        <template
+                                            x-for="m in (modelProviders.find(p=>p.slug===ep.provider)?.models||[])"
+                                            :key="m">
+                                            <button @click="ep.model = m"
+                                                :class="ep.model === m ? 'bg-[var(--stem-green-500)]/20 text-[var(--stem-green-500)] border-[var(--stem-green-500)]/30' : 'bg-white/5 text-white/40 border-transparent hover:bg-white/10 hover:text-white'"
+                                                class="px-2 py-0.5 rounded border text-[10px] font-bold font-mono transition-all"
+                                                x-text="m"></button>
+                                        </template>
+                                    </div>
+                                </div>
+
+                                <!-- Advanced Params -->
+                                <div class="grid grid-cols-2 gap-4 pt-1">
+                                    <div class="space-y-1.5">
+                                        <div class="flex justify-between items-center px-1">
+                                            <label
+                                                class="text-[10px] font-bold text-white/40 uppercase tracking-widest font-['Outfit']">采样温度</label>
+                                            <span class="text-[10px] font-bold text-[var(--stem-green-500)] font-mono"
+                                                x-text="ep.temperature || 0.7"></span>
+                                        </div>
+                                        <input type="range" min="0" max="2" step="0.05" x-model.number="ep.temperature"
+                                            class="w-full accent-[var(--stem-green-500)] h-1 bg-white/10 rounded appearance-none cursor-pointer">
+                                    </div>
+                                    <div class="space-y-1.5">
+                                        <div class="flex justify-between items-center px-1">
+                                            <label
+                                                class="text-[10px] font-bold text-white/40 uppercase tracking-widest font-['Outfit']">Max
+                                                Tokens</label>
+                                            <span class="text-[10px] font-bold text-[var(--stem-green-500)] font-mono"
+                                                x-text="ep.max_tokens || 4096"></span>
+                                        </div>
+                                        <input type="range" min="1024" max="128000" step="1024"
+                                            x-model.number="ep.max_tokens"
+                                            class="w-full accent-[var(--stem-green-500)] h-1 bg-white/10 rounded appearance-none cursor-pointer">
+                                    </div>
+                                </div>
+
+                                <!-- Action Toolbar -->
+                                <div class="flex items-center gap-2.5 pt-4 mt-3 border-t border-white/5">
+                                    <button @click="deleteChatEndpoint(idx)"
+                                        class="px-3 py-1.5 rounded-lg border text-[11px] font-bold text-rose-400 bg-rose-500/10 border-rose-500/10 hover:bg-rose-500 hover:text-white transition-all shadow-sm">
+                                        移除端点
+                                    </button>
+                                    <div class="flex-1"></div>
+                                    <button @click="testChatEndpoint(idx)" :disabled="epTesting[idx]"
+                                        class="px-4 py-1.5 rounded-lg border text-[11px] font-bold text-white/80 bg-white/5 border-white/10 hover:bg-white/10 hover:text-white disabled:opacity-30 transition-all">
+                                        <span x-text="epTesting[idx] ? '连接中...' : '网络连通测试'"></span>
+                                    </button>
+                                    <button @click="saveChatEndpoints()" :disabled="epSaving"
+                                        class="px-4 py-1.5 rounded-lg border text-[11px] font-black bg-[var(--stem-green-500)]/10 text-[var(--stem-green-500)] border-[var(--stem-green-500)]/30 hover:bg-[var(--stem-green-500)] hover:text-black disabled:opacity-30 transition-all shadow-sm">
+                                        <span x-text="epSaving ? '写入中...' : '提交更改'"></span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- section: 角色功能增强模型 -->
+            <div class="space-y-4 pt-5 border-t border-white/5">
+                <div class="space-y-1 ml-1 mb-4">
+                    <h3 class="text-[13px] font-bold text-white font-['Outfit'] tracking-wide">功能增强端点 (Role Overrides)
+                    </h3>
+                    <p class="text-[10px] text-white/40 font-medium">针对视觉感知、向量化与自动化操作的专项模型覆盖</p>
+                </div>
+
+                <div class="grid grid-cols-1 gap-3">
+                    <template x-for="role in (['vision','image_analyzer','embedding','autogui'])" :key="role">
+                        <div class="config-card rounded-xl border border-white/5 bg-white/[0.01]"
+                            x-data="{ roleOpen: false }">
+
+                            <!-- Role Title Row -->
+                            <div @click="roleOpen = !roleOpen" class="flex items-center gap-4 px-4 py-3 cursor-pointer">
+                                <div
+                                    class="w-9 h-9 rounded-xl bg-white/[0.03] border border-white/5 flex items-center justify-center shrink-0">
+                                    <span class="text-[16px]"
+                                        x-text="{'vision':'👁','image_analyzer':'🖼','embedding':'🔢','autogui':'🤖'}[role]"></span>
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <h4 class="text-[13px] font-bold text-white font-['Outfit'] tracking-tight"
+                                        x-text="{'vision':'视觉感知执行','image_analyzer':'图文多模态解析','embedding':'长效记忆嵌入','autogui':'物理自动化交互'}[role]">
+                                    </h4>
+                                    <p class="text-[11px] text-white/30 font-medium mt-0.5"
+                                        x-text="{'vision':'屏幕分析与建议','image_analyzer':'用户图片解析','embedding':'RAG及知识库','autogui':'Agent动作序列'}[role]">
+                                    </p>
+                                </div>
+                                <div class="flex items-center gap-3 shrink-0">
+                                    <span
+                                        class="px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 text-[9px] font-black uppercase font-mono shadow-inner border border-blue-500/10"
+                                        x-text="(roleEndpoints[role]?.length||0) + ' EP'"></span>
+                                    <button @click.stop="addRoleEndpoint(role)"
+                                        class="px-3 py-1.5 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500 hover:text-white text-[11px] font-bold transition-all">+
+                                        添加接口</button>
+                                    <svg class="w-4 h-4 text-white/20 transition-transform"
+                                        :class="roleOpen ? 'rotate-180 text-white' : ''" fill="none"
+                                        stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </div>
+                            </div>
+
+                            <!-- List of endpoints for this role -->
+                            <div x-show="roleOpen" x-collapse
+                                class="border-t border-white/5 divide-y divide-white/5 bg-black/20">
+                                <template x-for="(rep, rIdx) in (roleEndpoints[role] || [])" :key="rIdx">
+                                    <div x-data="{ repOpen: rep._new || false, showKey: false }"
+                                        class="transition-all overflow-hidden"
+                                        :class="rep._primary ? 'bg-[var(--stem-green-500)]/[0.02]' : ''">
+
+                                        <!-- Sub Header -->
+                                        <div @click="repOpen = !repOpen"
+                                            class="flex items-center gap-3 px-6 py-3 cursor-pointer hover:bg-white/5 transition-colors">
+                                            <template x-if="rep._primary">
+                                                <div
+                                                    class="w-1.5 h-1.5 rounded-full bg-[var(--stem-green-500)] shadow-[0_0_8px_rgba(182,240,89,0.5)]">
+                                                </div>
+                                            </template>
+                                            <div class="flex-1 min-w-0">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="text-[12px] font-bold text-white/80"
+                                                        x-text="rep.name || '角色端点 ' + (rIdx + 1)"></span>
+                                                    <span x-show="rep._primary"
+                                                        class="px-1.5 py-0.5 rounded text-[8px] font-black uppercase text-[var(--stem-green-500)] border border-[var(--stem-green-500)]/30 bg-[var(--stem-green-500)]/10 shadow-sm ml-1">Pri</span>
+                                                </div>
+                                                <p class="text-[10px] text-white/30 font-mono mt-0.5 truncate"
+                                                    x-text="rep.model || '未设定模型ID'"></p>
+                                            </div>
+                                            <!-- Delete -->
+                                            <button x-show="!rep._primary" @click.stop="deleteRoleEndpoint(role, rIdx)"
+                                                class="p-1.5 text-white/20 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all">
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor"
+                                                    viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                                        stroke-width="2"
+                                                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                </svg>
+                                            </button>
+                                        </div>
+
+                                        <!-- Expanded Form -->
+                                        <div x-show="repOpen" x-collapse class="px-6 pb-4 pt-1 space-y-3">
+                                            <div class="grid grid-cols-2 gap-3">
+                                                <div class="space-y-1">
+                                                    <label
+                                                        class="text-[10px] font-bold text-white/30 uppercase tracking-widest ml-0.5">预设供应商</label>
+                                                    <select
+                                                        @change="applyRoleEpPreset(role, rIdx, modelProviders.find(p=>p.slug===($event.target.value)))"
+                                                        class="w-full h-8 px-3 bg-black/40 border border-white/10 rounded-lg text-white text-[11px] focus:border-blue-500/50 focus:outline-none transition-all appearance-none cursor-pointer">
+                                                        <option value="">── 自定义 ──</option>
+                                                        <template
+                                                            x-for="cat in [...new Set(modelProviders.map(p=>p.category))]"
+                                                            :key="cat">
+                                                            <optgroup :label="cat">
+                                                                <template
+                                                                    x-for="pv in modelProviders.filter(p=>p.category===cat)"
+                                                                    :key="pv.slug">
+                                                                    <option :value="pv.slug"
+                                                                        :selected="rep.provider===pv.slug"
+                                                                        x-text="pv.name"></option>
+                                                                </template>
+                                                            </optgroup>
+                                                        </template>
+                                                    </select>
+                                                </div>
+                                                <div class="space-y-1">
+                                                    <label
+                                                        class="text-[10px] font-bold text-white/30 uppercase tracking-widest ml-0.5">模型名
+                                                        (Model)</label>
+                                                    <input type="text" x-model="rep.model" placeholder="Model ID"
+                                                        class="w-full h-8 px-3 bg-black/40 border border-white/10 rounded-lg text-white text-[11px] font-bold font-mono focus:border-blue-500/50 focus:outline-none">
+                                                </div>
+                                            </div>
+
+                                            <div class="space-y-1">
+                                                <label
+                                                    class="text-[10px] font-bold text-white/30 uppercase tracking-widest ml-0.5">Endpoint
+                                                    URL</label>
+                                                <input type="text" x-model="rep.base_url" placeholder="URL"
+                                                    class="w-full h-8 px-3 bg-black/40 border border-white/10 rounded-lg text-white text-[11px] font-mono focus:border-blue-500/50 focus:outline-none">
+                                            </div>
+
+                                            <div class="space-y-1">
+                                                <label
+                                                    class="text-[10px] font-bold text-white/30 uppercase tracking-widest ml-0.5">API
+                                                    私钥</label>
+                                                <input type="password" x-model="rep.api_key" placeholder="Key"
+                                                    class="w-full h-8 px-3 bg-black/40 border border-white/10 rounded-lg text-blue-400 text-[11px] font-mono tracking-widest focus:border-blue-500/50 focus:outline-none">
+                                            </div>
+
+                                            <div class="flex items-center gap-2 pt-2">
+                                                <button @click="testRoleEndpoint(role, rIdx)"
+                                                    :disabled="roleEpTesting[role+'-'+rIdx]"
+                                                    class="px-3 py-1.5 rounded-lg border border-blue-500/20 bg-blue-500/10 hover:bg-blue-500 text-blue-400 hover:text-white text-[11px] font-bold transition-all shadow-sm">连接测试</button>
+                                                <button @click="saveRoleEndpoints(role)" :disabled="roleEpSaving[role]"
+                                                    class="ml-auto px-4 py-1.5 rounded-lg text-[11px] font-black bg-blue-500/10 text-blue-400 border border-blue-500/30 hover:bg-blue-500 hover:text-white transition-all shadow-sm active:scale-95">提交保存</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════ TAB: 系统环境 ══════════════════════════ -->
+    <div x-show="cfgTab === 'system'" x-transition:enter="transition ease-out duration-200"
+        x-transition:enter-start="opacity-0 translate-y-2"
+        class="flex-1 overflow-y-auto custom-scrollbar px-6 py-6 space-y-8">
+
+        <!-- Browser Configuration -->
+        <div class="space-y-4">
+            <div class="flex items-center gap-2.5">
+                <div class="p-1.5 rounded-lg bg-[var(--stem-green-500)]/10 text-[var(--stem-green-500)]">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
                     </svg>
-                    Edge
+                </div>
+                <div>
+                    <h3 class="text-[14px] font-bold text-white font-['Outfit']">浏览器执行环境</h3>
+                    <p class="text-[11px] text-white/40 font-medium mt-0.5">指定自动化与 UI 执行的内核</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 p-1.5 bg-black/40 border border-white/5 rounded-xl max-w-sm">
+                <button @click="updateBrowserSetting('edge')"
+                    :class="config.browser_choice === 'edge' ? 'bg-white/10 text-white border-white/10 shadow' : 'text-white/40 border-transparent hover:text-white'"
+                    class="py-2 px-4 rounded-lg text-[12px] font-bold transition-all border flex items-center justify-center gap-2">
+                    <span class="text-[14px]">🌐</span> Edge
                 </button>
                 <button @click="updateBrowserSetting('chrome')"
-                    :class="config.browser_choice === 'chrome' ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' : 'text-white/40 hover:text-white/60 border-transparent'"
-                    class="flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all border flex items-center justify-center gap-2">
-                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                    </svg>
-                    Chrome
+                    :class="config.browser_choice === 'chrome' ? 'bg-white/10 text-white border-white/10 shadow' : 'text-white/40 border-transparent hover:text-white'"
+                    class="py-2 px-4 rounded-lg text-[12px] font-bold transition-all border flex items-center justify-center gap-2">
+                    <span class="text-[14px]">🔥</span> Chrome
                 </button>
             </div>
-            <p class="text-white/30 text-[10px] mt-2">修改后将在下一次通过大模型执行浏览器自动化操作时生效，前提是你的系统中安装了对应的浏览器。</p>
         </div>
 
-        <!-- Proactive Chat Settings -->
-        <div class="mb-6">
-            <p class="text-blue-300 text-xs font-semibold mb-2">主动感知与活泼度</p>
-
-            <!-- Interval -->
-            <div class="mb-5">
-                <div class="flex justify-between items-center mb-1">
-                    <div class="flex items-center gap-2">
-                        <span class="text-white/80 text-[11px]">视觉检测心跳频率</span>
-                        <span class="text-white/25 text-[9px]" x-show="proactiveDefaults[config.proactive.mode]">
-                            (策略推荐: <span
-                                x-text="proactiveDefaults[config.proactive.mode].interval_minutes === null ? '禁用' : proactiveDefaults[config.proactive.mode].interval_minutes + 'm'"></span>)
-                        </span>
-                    </div>
-                    <span class="text-blue-400 text-[11px]"
-                        x-text="config.proactive.interval_minutes === null ? '已禁用' : config.proactive.interval_minutes + ' 分钟'"></span>
+        <!-- Proactive Chat Behavior -->
+        <div class="space-y-5 pt-6 border-t border-white/5">
+            <div class="flex items-center gap-2.5">
+                <div class="p-1.5 rounded-lg bg-orange-500/10 text-orange-400">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
                 </div>
-                <input type="range" min="1" max="60" step="1"
-                    x-model.number="config.proactive.interval_minutes" @change="saveGlobalConfig()"
-                    class="w-full accent-blue-500 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer">
-                <div class="flex justify-between text-white/30 text-[9px] mt-1 pr-1">
-                    <span>1min</span>
-                    <span>60min</span>
+                <div>
+                    <h3 class="text-[14px] font-bold text-white font-['Outfit'] tracking-wide">主动感知逻辑 (Agent
+                        Intelligence)</h3>
+                    <p class="text-[11px] text-white/40 font-medium mt-0.5">调整内核的心跳检测与交互频次</p>
                 </div>
             </div>
 
-            <!-- Cooldown -->
-            <div class="mb-5">
-                <div class="flex justify-between items-center mb-1">
-                    <div class="flex items-center gap-2">
-                        <span class="text-white/80 text-[11px]">主动发话冷却时间</span>
-                        <span class="text-white/25 text-[9px]" x-show="proactiveDefaults[config.proactive.mode]">
-                            (策略推荐: <span
-                                x-text="proactiveDefaults[config.proactive.mode].cooldown_minutes === null ? '禁用' : proactiveDefaults[config.proactive.mode].cooldown_minutes + 'm'"></span>)
-                        </span>
+            <!-- Slider Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Interval -->
+                <div class="p-4 bg-white/[0.02] border border-white/5 rounded-xl hover:bg-white/[0.04] transition-all">
+                    <div class="flex justify-between items-center mb-4">
+                        <div class="space-y-0.5">
+                            <span class="block text-[12px] font-bold text-white font-['Outfit']">视觉捕获频率</span>
+                            <span class="block text-[10px] text-white/30 font-medium font-mono">VISION TICK</span>
+                        </div>
+                        <span class="text-[16px] font-bold text-[var(--stem-green-500)] font-mono"
+                            x-text="config.proactive.interval_minutes === null ? 'OFF' : config.proactive.interval_minutes + 'm'"></span>
                     </div>
-                    <span class="text-blue-400 text-[11px]"
-                        x-text="config.proactive.cooldown_minutes === null ? '已禁用' : config.proactive.cooldown_minutes + ' 分钟'"></span>
+                    <input type="range" min="1" max="60" step="1" x-model.number="config.proactive.interval_minutes"
+                        @change="saveGlobalConfig()"
+                        class="w-full accent-[var(--stem-green-500)] h-1 bg-black/40 rounded appearance-none cursor-pointer">
                 </div>
-                <input type="range" min="1" max="60" step="1"
-                    x-model.number="config.proactive.cooldown_minutes" @change="saveGlobalConfig()"
-                    class="w-full accent-blue-500 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer">
-                <div class="flex justify-between text-white/30 text-[9px] mt-1 pr-1">
-                    <span>1m (话痨)</span>
-                    <span>60m (社恐)</span>
+
+                <!-- Cooldown -->
+                <div class="p-4 bg-white/[0.02] border border-white/5 rounded-xl hover:bg-white/[0.04] transition-all">
+                    <div class="flex justify-between items-center mb-4">
+                        <div class="space-y-0.5">
+                            <span class="block text-[12px] font-bold text-white font-['Outfit']">互动冷却期</span>
+                            <span class="block text-[10px] text-white/30 font-medium font-mono">COOLING</span>
+                        </div>
+                        <span class="text-[16px] font-bold text-orange-400 font-mono"
+                            x-text="config.proactive.cooldown_minutes === null ? 'OFF' : config.proactive.cooldown_minutes + 'm'"></span>
+                    </div>
+                    <input type="range" min="1" max="60" step="1" x-model.number="config.proactive.cooldown_minutes"
+                        @change="saveGlobalConfig()"
+                        class="w-full accent-orange-500 h-1 bg-black/40 rounded appearance-none cursor-pointer">
                 </div>
             </div>
 
-            <!-- Mode -->
-            <div class="mb-4">
-                <p class="text-white/80 text-[11px] mb-2">交互干预策略 (点击切换推荐预设)</p>
-                <div class="flex gap-2 p-1 bg-white/5 rounded-xl border border-white/10">
+            <!-- Mode Selector -->
+            <div class="space-y-2">
+                <label
+                    class="text-[11px] font-bold text-white/40 uppercase tracking-widest font-['Outfit'] ml-0.5">响应预设方案</label>
+                <div class="flex gap-2 p-1 bg-black/40 border border-white/5 rounded-lg max-w-sm">
                     <template x-for="m in ['silent', 'normal', 'lively']" :key="m">
                         <button @click="setProactiveMode(m)"
-                            :class="config.proactive.mode === m ? 'bg-blue-500/20 text-blue-300 border-blue-500/30 shadow-sm' : 'text-white/40 hover:text-white/60 border-transparent'"
-                            class="flex-1 py-1.5 px-2 rounded-lg text-xs font-medium transition-all border flex items-center justify-center">
-                            <span x-text="m === 'silent' ? '静默' : (m === 'normal' ? '正常' : '活泼')"></span>
+                            :class="config.proactive.mode === m ? 'bg-white/10 text-white border-white/10 shadow-sm' : 'text-white/40 border-transparent hover:text-white/80'"
+                            class="flex-1 py-2 rounded-md text-[11px] font-bold transition-all border flex flex-col items-center justify-center gap-0.5">
+                            <span x-text="m==='silent' ? '静默运行' : (m==='normal' ? '平衡' : '主动')"></span>
                         </button>
                     </template>
                 </div>
-                <p class="text-white/30 text-[10px] mt-2 leading-relaxed">
-                    <span x-show="config.proactive.mode === 'silent'">静默: 禁用视觉检测与主动发话。</span>
-                    <span x-show="config.proactive.mode === 'normal'">正常: 默认频率与平衡冷却，由模型决定是否开口。</span>
-                    <span x-show="config.proactive.mode === 'lively'">活泼: 高频感知，极短冷却，极具互动性。</span>
-                </p>
             </div>
 
-            <!-- Verbose Toggle -->
-            <div class="flex items-center justify-between mt-3 mb-1 px-1 bg-white/5 p-2 rounded-xl border border-white/5">
-                <span class="text-white/80 text-[11px]">在后端终端显示感知日志</span>
+            <div class="flex items-center gap-3 bg-blue-500/5 border border-blue-500/10 p-4 rounded-xl">
+                <div class="p-2.5 rounded-xl bg-blue-500/20 text-blue-400 shrink-0">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </div>
+                <div class="flex-1">
+                    <h4 class="text-[13px] font-bold text-white mb-0.5 font-['Outfit']">后端感知日志展现 (Verbose)</h4>
+                    <p class="text-[11px] text-white/40 font-medium">在界面中渲染后端分析决策原始数据。</p>
+                </div>
                 <label class="relative inline-flex items-center cursor-pointer">
                     <input type="checkbox" x-model="config.proactive.verbose" @change="saveGlobalConfig()"
                         class="sr-only peer">
                     <div
-                        class="w-8 h-4 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-500">
+                        class="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-transparent after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white/40 after:border-white/10 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[var(--stem-green-500)]">
                     </div>
                 </label>
             </div>
 
-            <!-- Poke Button -->
-            <div class="mt-4">
-                <button @click="pokeAI()"
-                    class="w-full py-2.5 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 rounded-xl text-blue-300 text-xs font-medium transition-all flex items-center justify-center gap-2">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
-                    </svg>
-                    戳一下 AI (强制立刻搭话)
-                </button>
-            </div>
+            <button @click="pokeAI()"
+                class="w-full py-3 bg-[var(--stem-green-500)]/10 hover:bg-[var(--stem-green-500)] text-[var(--stem-green-500)] hover:text-black border border-[var(--stem-green-500)]/20 rounded-xl text-[13px] font-black transition-all active:scale-[0.98] flex items-center justify-center gap-2 tracking-wider mt-4">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+                        d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                手动唤醒模型推理
+            </button>
         </div>
     </div>
 </div>

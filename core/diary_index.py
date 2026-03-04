@@ -41,9 +41,17 @@ class DiaryIndex:
     def __init__(self, embedding_client, data_dir: str = "data"):
         self.embedding_client = embedding_client
         self.data_dir = Path(data_dir)
-        self.index_file = self.data_dir / "diary_vectors.jsonl"
+        self.index_file = self.data_dir / "diary" / "diary_vectors.jsonl"
+        self.index_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Auto-migrate from legacy flat path
+        legacy = self.data_dir / "diary_vectors.jsonl"
+        if legacy.exists() and not self.index_file.exists():
+            legacy.rename(self.index_file)
+            print(f"[DiaryIndex] 已迁移索引: {legacy} → {self.index_file}")
+
         self._chunks: List[DiaryChunk] = []
-        self._indexed_dates: Dict[str, int] = {}  # date -> chunk count
+        self._indexed_dates: Dict[str, int] = {}
         self._load()
 
     # ── Public API ──────────────────────────────────────────────────

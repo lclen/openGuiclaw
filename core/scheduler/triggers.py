@@ -200,7 +200,13 @@ class CronTrigger(Trigger):
         else:
             start = datetime.now() + timedelta(minutes=1)
 
-        start = start.replace(second=0, microsecond=0)
+        # Truncate to minute boundary; if truncation moved us backward, advance by 1 min
+        truncated = start.replace(second=0, microsecond=0)
+        if truncated < start:
+            start = truncated + timedelta(minutes=1)
+        else:
+            start = truncated
+
         max_iterations = 365 * 2 * 24 * 60
 
         current = start

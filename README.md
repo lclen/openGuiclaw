@@ -95,7 +95,7 @@ cp config.json.example config.json
 **Web UI（推荐）**
 
 ```bash
-uv run uvicorn core.server:app --host 127.0.0.1 --port 8080
+uv run uvicorn core.server:app --host 127.0.0.1 --port 8010 --reload  
 ```
 
 访问 `http://127.0.0.1:8080`

@@ -19,6 +19,7 @@ class TaskType(Enum):
     """任务类型"""
     REMINDER = "reminder"  # 简单提醒
     TASK = "task"          # Agent 执行
+    SYSTEM = "system"      # 系统内置任务（不通过 LLM）
 
 
 class TaskStatus(Enum):
@@ -101,6 +102,7 @@ class ScheduledTask:
 
     def mark_running(self) -> None:
         self.status = TaskStatus.RUNNING
+        self.next_run = None  # clear to prevent re-trigger while running
         self.updated_at = datetime.now()
 
     def mark_completed(self, next_run: datetime | None = None) -> None:
@@ -111,6 +113,7 @@ class ScheduledTask:
         if self.trigger_type == TriggerType.ONCE:
             self.status = TaskStatus.COMPLETED
             self.enabled = False
+            self.next_run = None  # explicitly clear so restart won't re-trigger
         else:
             self.status = TaskStatus.SCHEDULED
             self.next_run = next_run

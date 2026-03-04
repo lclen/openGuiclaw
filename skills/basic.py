@@ -63,67 +63,6 @@ def register(manager: SkillManager) -> None:
         )
 
     @manager.skill(
-        name="read_file",
-        description="读取本地文件内容。",
-        parameters={
-            "properties": {
-                "path": {"type": "string", "description": "文件路径"},
-            },
-            "required": ["path"],
-        },
-        category="filesystem",
-    )
-    def read_file(path: str) -> str:
-        p = Path(path)
-        if not p.exists():
-            return f"文件不存在: {path}"
-        try:
-            return p.read_text(encoding="utf-8")
-        except Exception as e:
-            return f"读取失败: {e}"
-
-    @manager.skill(
-        name="write_file",
-        description="将内容写入本地文件（覆盖写入）。",
-        parameters={
-            "properties": {
-                "path": {"type": "string", "description": "文件路径"},
-                "content": {"type": "string", "description": "要写入的内容"},
-            },
-            "required": ["path", "content"],
-        },
-        category="filesystem",
-    )
-    def write_file(path: str, content: str) -> str:
-        try:
-            Path(path).write_text(content, encoding="utf-8")
-            return f"[OK] 写入成功: {path}"
-        except Exception as e:
-            return f"写入失败: {e}"
-
-    @manager.skill(
-        name="list_dir",
-        description="列出目录下的文件和子目录。",
-        parameters={
-            "properties": {
-                "path": {"type": "string", "description": "目录路径，默认当前目录"},
-            },
-            "required": [],
-        },
-        category="filesystem",
-    )
-    def list_dir(path: str = ".") -> str:
-        p = Path(path)
-        if not p.is_dir():
-            return f"不是有效目录: {path}"
-        items = sorted(p.iterdir(), key=lambda x: (x.is_file(), x.name))
-        lines = []
-        for item in items:
-            prefix = "📁" if item.is_dir() else "📄"
-            lines.append(f"{prefix} {item.name}")
-        return "\n".join(lines) if lines else "（空目录）"
-
-    @manager.skill(
         name="update_user_profile",
         description="即时更新用户的长期档案与核心设定（客观实事与主观偏好）。当你得知了重要事实、偏好、习惯或约束限制时，不要等当天结束，而是立刻使用此工具让其生效。",
         parameters={

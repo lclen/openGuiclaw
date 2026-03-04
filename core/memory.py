@@ -10,15 +10,19 @@ import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
+MEMORY_TYPES = {"fact", "skill", "error", "preference", "rule", "experience"}
+
 
 class MemoryItem:
     """A single memory record."""
 
-    def __init__(self, content: str, tags: List[str] = None):
+    def __init__(self, content: str, tags: List[str] = None, type: str = "fact", source: str = "manual"):
         import uuid
         self.id = f"mem_{uuid.uuid4().hex[:12]}"
         self.content = content
         self.tags = tags or []
+        self.type = type if type in MEMORY_TYPES else "fact"
+        self.source = source
         self.timestamp = time.time()
         self.created_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.timestamp))
 
@@ -26,14 +30,21 @@ class MemoryItem:
         return {
             "id": self.id,
             "content": self.content,
+            "type": self.type,
             "tags": self.tags,
+            "source": self.source,
             "timestamp": self.timestamp,
             "created_at": self.created_at,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MemoryItem":
-        item = cls(data["content"], data.get("tags", []))
+        item = cls(
+            data["content"],
+            data.get("tags", []),
+            type=data.get("type", "fact"),
+            source=data.get("source", "manual"),
+        )
         item.id = data.get("id", item.id)
         item.timestamp = data.get("timestamp", item.timestamp)
         item.created_at = data.get("created_at", item.created_at)
@@ -52,12 +63,23 @@ class MemoryManager:
     def __init__(
         self,
         data_dir: str = "data",
-        embedding_client=None,   # EmbeddingClient | None
-        vector_store=None,       # VectorStore | None
+        embedding_client=None,
+        vector_store=None,
     ):
+        import threading
+        self._lock = threading.Lock()
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(exist_ok=True)
-        self.memory_file = self.data_dir / "scene_memory.jsonl"
+        memory_dir = self.data_dir / "memory"
+        memory_dir.mkdir(exist_ok=True)
+        self.memory_file = memory_dir / "scene_memory.jsonl"
+
+        # Auto-migrate from legacy flat path
+        legacy = self.data_dir / "scene_memory.jsonl"
+        if legacy.exists() and not self.memory_file.exists():
+            legacy.rename(self.memory_file)
+            print(f"[Memory] 已迁移: {legacy} → {self.memory_file}")
+
         self._memories: List[MemoryItem] = []
         self._embedding_client = embedding_client
         self._vector_store = vector_store
@@ -82,25 +104,35 @@ class MemoryManager:
         with open(self.memory_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(item.to_dict(), ensure_ascii=False) + "\n")
 
-    def add(self, content: str, tags: List[str] = None) -> MemoryItem:
+    def add(self, content: str, tags: List[str] = None,
+            type: str = "fact", source: str = "manual") -> MemoryItem:
         """
         Add a new memory. Skips if exact same content already exists.
+        Uses fuzzy deduplication: if content similarity > 80%, skip.
         If vector search is available, generates and stores embedding.
         """
-        # Simple deduplication: normalize and compare content
-        normalized = " ".join(content.lower().split())
-        for mem in self._memories:
-            if " ".join(mem.content.lower().split()) == normalized:
-                return mem
+        with self._lock:
+            # Truncate content to 300 chars
+            content = content.strip()[:300]
 
-        item = MemoryItem(content, tags)
-        self._memories.append(item)
-        self._save_one(item)
+            normalized = " ".join(content.lower().split())
+            for mem in self._memories:
+                mem_normalized = " ".join(mem.content.lower().split())
+                # Exact match (same type)
+                if mem_normalized == normalized and mem.type == type:
+                    return mem
+                # Fuzzy dedup: if one string contains the other (>80% length ratio), skip
+                shorter, longer = sorted([normalized, mem_normalized], key=len)
+                if len(longer) > 0 and len(shorter) / len(longer) > 0.8 and shorter in longer:
+                    return mem
 
-        # Generate and store vectors asynchronously
+            item = MemoryItem(content, tags, type=type, source=source)
+            self._memories.append(item)
+            self._save_one(item)
+
+        # Generate and store vectors asynchronously (outside lock — I/O bound)
         if self._embedding_client and self._vector_store:
             try:
-                # Use embed_text to get multiple chunks
                 vectors = self._embedding_client.embed_text(content)
                 if vectors:
                     self._vector_store.add_vectors(item.id, vectors)
@@ -178,6 +210,10 @@ class MemoryManager:
     def list_all(self) -> List[MemoryItem]:
         return list(self._memories)
 
+    def list_by_type(self, memory_type: str) -> List[MemoryItem]:
+        """Return all memories matching the given type."""
+        return [m for m in self._memories if m.type == memory_type]
+
     def delete(self, memory_id: str) -> bool:
         """Delete a memory by id and rewrite the file."""
         before = len(self._memories)
@@ -190,23 +226,27 @@ class MemoryManager:
             return True
         return False
 
-    def update(self, memory_id: str, new_content: str, new_tags: List[str] = None) -> bool:
+    def update(self, memory_id: str, new_content: str = None,
+               new_tags: List[str] = None, new_type: str = None) -> bool:
         """
         Update an existing memory by ID.
         Rewrites the file and regenerates the vector.
         """
         for mem in self._memories:
             if mem.id == memory_id:
-                mem.content = new_content
+                if new_content is not None:
+                    mem.content = new_content
                 if new_tags is not None:
                     mem.tags = new_tags
+                if new_type is not None:
+                    mem.type = new_type if new_type in MEMORY_TYPES else "fact"
                 # Rewrite the whole file to reflect the edit
                 self._rewrite_file()
                 # Regenerate vector
                 if self._embedding_client and self._vector_store:
                     try:
                         self._vector_store.remove(memory_id)
-                        vectors = self._embedding_client.embed_text(new_content)
+                        vectors = self._embedding_client.embed_text(mem.content)
                         if vectors:
                             self._vector_store.add_vectors(memory_id, vectors)
                     except Exception as e:

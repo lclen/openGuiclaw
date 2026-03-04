@@ -60,7 +60,16 @@ class KnowledgeGraph:
     """
 
     def __init__(self, data_dir: str = "data"):
-        self.graph_file = Path(data_dir) / "knowledge_graph.jsonl"
+        memory_dir = Path(data_dir) / "memory"
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        self.graph_file = memory_dir / "knowledge_graph.jsonl"
+        
+        # Auto-migrate from legacy flat path
+        legacy = Path(data_dir) / "knowledge_graph.jsonl"
+        if legacy.exists() and not self.graph_file.exists():
+            legacy.rename(self.graph_file)
+            print(f"[KnowledgeGraph] 已迁移: {legacy} → {self.graph_file}")
+        
         self._triples: List[Triple] = []
         self._load()
 

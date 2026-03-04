@@ -1,149 +1,419 @@
 <!-- Skills Management Panel -->
-<div x-show="activePanel === 'skills'" class="h-full flex flex-col">
-    <!-- Header -->
-    <div class="flex items-center justify-between px-6 py-4 border-b border-white/10">
-        <div>
-            <h2 class="text-xl font-semibold text-white">技能管理</h2>
-            <p class="text-sm text-white/60 mt-1">
-                <span x-text="skills.filter(s => s.enabled).length"></span> 个已启用 /
-                <span x-text="skills.length"></span> 个总计
-            </p>
+<div x-show="activePanel === 'skills'"
+    class="flex flex-col h-full bg-[var(--noble-black-900)]/60 backdrop-blur-3xl selection:bg-[var(--stem-green-500)]/30"
+    x-data="{ skillTab: 'installed', urlInput: '' }">
+
+    <style>
+        .skill-card {
+            transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+
+        .skill-card:hover {
+            border-color: rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.03);
+            transform: translateY(-1px);
+        }
+
+        .skill-input {
+            transition: all 0.2s ease;
+        }
+
+        .skill-input:focus {
+            box-shadow: 0 0 0 2px rgba(182, 240, 89, 0.1);
+        }
+
+        .primary-glow {
+            box-shadow: 0 0 12px rgba(182, 240, 89, 0.15);
+        }
+
+        [x-cloak] {
+            display: none !important;
+        }
+
+        .collapse-enter {
+            max-height: 0;
+            opacity: 0;
+            transform: translateY(-5px);
+        }
+
+        .collapse-enter-end {
+            max-height: 1000px;
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .collapse-leave {
+            max-height: 1000px;
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .collapse-leave-end {
+            max-height: 0;
+            opacity: 0;
+            transform: translateY(-5px);
+        }
+    </style>
+
+    <!-- Header Area -->
+    <div class="px-6 py-4 border-b border-white/5 bg-black/40 shrink-0">
+        <div class="flex items-center justify-between">
+            <div>
+                <h2 class="text-[15px] font-bold text-white tracking-tight font-['Outfit'] flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-[var(--stem-green-500)] primary-glow animate-pulse"></span>
+                    动态算子池 (Skills)
+                </h2>
+                <p class="text-[var(--noble-black-400)] text-[11px] font-medium mt-0.5 flex items-center gap-1.5">
+                    <span x-text="skills.filter(s => s.enabled).length + ' 活动节点'"></span>
+                    <span class="opacity-30">/</span>
+                    <span x-text="skills.length + ' 总挂载'"></span>
+                </p>
+            </div>
+
+            <button @click="reloadSkills()"
+                class="w-8 h-8 flex items-center justify-center rounded-lg bg-white/5 hover:bg-blue-500/10 text-white/40 hover:text-blue-400 border border-white/5 hover:border-blue-500/20 transition-all shadow-sm active:scale-95"
+                title="重新唤醒引擎">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+            </button>
         </div>
-        <button @click="reloadSkills()"
-            class="px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded-lg transition-colors text-sm">
-            刷新
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="flex shrink-0 px-6 bg-black/20 border-b border-white/5">
+        <button @click="skillTab = 'installed'"
+            :class="skillTab === 'installed' ? 'text-white border-[var(--stem-green-500)]' : 'text-white/40 border-transparent hover:text-white/70'"
+            class="relative py-3 mr-6 text-[12px] font-bold uppercase tracking-widest transition-all border-b-2 font-['Outfit'] flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            已装载系统算子
+        </button>
+        <button
+            @click="skillTab = 'marketplace'; if(!skillMarketplace.length) searchSkillMarketplace(skillMarketSearch)"
+            :class="skillTab === 'marketplace' ? 'text-white border-[var(--stem-green-500)]' : 'text-white/40 border-transparent hover:text-white/70'"
+            class="relative py-3 text-[12px] font-bold uppercase tracking-widest transition-all border-b-2 font-['Outfit'] flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+            技能扩展库
         </button>
     </div>
 
-    <!-- Search and Filter -->
-    <div class="px-6 py-3 border-b border-white/10 space-y-2">
-        <input type="text" x-model="skillSearchQuery" placeholder="搜索技能名称或描述..."
-            class="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-blue-500/50 text-sm">
-        <div class="flex gap-2">
-            <button @click="skillStatusFilter = 'all'"
-                :class="skillStatusFilter === 'all' ? 'bg-blue-500/30 text-blue-300' : 'bg-white/5 text-white/50'"
-                class="px-3 py-1 rounded-lg text-xs transition-colors">全部</button>
-            <button @click="skillStatusFilter = 'enabled'"
-                :class="skillStatusFilter === 'enabled' ? 'bg-green-500/30 text-green-300' : 'bg-white/5 text-white/50'"
-                class="px-3 py-1 rounded-lg text-xs transition-colors">已启用</button>
-            <button @click="skillStatusFilter = 'disabled'"
-                :class="skillStatusFilter === 'disabled' ? 'bg-gray-500/30 text-gray-300' : 'bg-white/5 text-white/50'"
-                class="px-3 py-1 rounded-lg text-xs transition-colors">已禁用</button>
+    <!-- ══════════════════════════ INSTALLED TAB ══════════════════════════ -->
+    <div x-show="skillTab === 'installed'" x-transition:enter="transition ease-out duration-200"
+        x-transition:enter-start="opacity-0 translate-y-2" class="flex-1 flex flex-col overflow-hidden">
+
+        <!-- Search and Filter -->
+        <div class="px-6 py-4 border-b border-white/5 space-y-3 shrink-0 bg-black/10">
+            <div class="relative group">
+                <div class="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                    <svg class="w-4 h-4 text-white/30 group-focus-within:text-[var(--stem-green-500)] transition-colors"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                </div>
+                <input type="text" x-model="skillSearchQuery" placeholder="检索算子功能..."
+                    class="skill-input w-full pl-9 pr-4 py-2 bg-black/40 border border-white/10 rounded-lg text-white text-[12px] font-medium placeholder-white/30 focus:outline-none focus:border-[var(--stem-green-500)]/50 transition-all">
+            </div>
+
+            <div class="flex gap-2">
+                <button @click="skillStatusFilter = 'all'"
+                    :class="skillStatusFilter === 'all' ? 'bg-blue-500/15 text-blue-400 border-blue-500/30' : 'bg-transparent text-white/40 border-white/5 hover:bg-white/5 hover:text-white'"
+                    class="px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border tracking-widest uppercase font-['Outfit']">全部视图</button>
+                <button @click="skillStatusFilter = 'enabled'"
+                    :class="skillStatusFilter === 'enabled' ? 'bg-[var(--stem-green-500)]/15 text-[var(--stem-green-500)] border-[var(--stem-green-500)]/30' : 'bg-transparent text-white/40 border-white/5 hover:bg-white/5 hover:text-white'"
+                    class="px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border tracking-widest uppercase font-['Outfit']">仅活动态</button>
+                <button @click="skillStatusFilter = 'disabled'"
+                    :class="skillStatusFilter === 'disabled' ? 'bg-rose-500/15 text-rose-400 border-rose-500/30' : 'bg-transparent text-white/40 border-white/5 hover:bg-white/5 hover:text-white'"
+                    class="px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border tracking-widest uppercase font-['Outfit']">已休眠体</button>
+            </div>
         </div>
-    </div>
 
-    <!-- Grouped Skills List -->
-    <div class="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+        <!-- Grouped Skills List -->
+        <div class="flex-1 overflow-y-auto px-6 py-4 space-y-3 custom-scrollbar">
+            <template x-for="[category, categorySkills] in groupedSkills" :key="category">
+                <div x-data="{ open: false }"
+                    class="skill-card bg-white/[0.02] border border-white/5 rounded-xl overflow-hidden shadow-sm transition-all group">
 
-        <template x-for="[category, categorySkills] in groupedSkills" :key="category">
-            <div x-data="{ open: false }" class="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+                    <!-- Category Header -->
+                    <button @click="open = !open"
+                        class="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.04] transition-colors cursor-pointer select-none">
+                        <div class="flex items-center gap-3">
+                            <div
+                                class="w-8 h-8 flex items-center justify-center rounded-lg bg-black/40 border border-white/5 group-hover:border-blue-500/30 transition-colors">
+                                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor"
+                                    viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                </svg>
+                            </div>
+                            <div class="text-left flex items-center gap-2">
+                                <span class="text-white text-[13px] font-bold capitalize font-['Outfit'] tracking-wide"
+                                    x-text="category"></span>
+                                <span class="text-white/40 text-[10px] font-mono mt-0.5"
+                                    x-text="'[' + categorySkills.length + ']'"></span>
+                            </div>
+                        </div>
 
-                <!-- Category Header (clickable to collapse) -->
-                <button @click="open = !open"
-                    class="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors">
-                    <div class="flex items-center gap-2">
-                        <svg class="w-4 h-4 text-blue-300/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                        </svg>
-                        <span class="text-white/80 text-sm font-medium capitalize" x-text="category"></span>
-                        <span class="text-white/30 text-xs"
-                            x-text="'(' + categorySkills.length + ')'"></span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <span class="text-xs"
-                            :class="categorySkills.every(s => s.enabled) ? 'text-green-400/60' : categorySkills.some(s => s.enabled) ? 'text-yellow-400/60' : 'text-white/20'"
-                            x-text="categorySkills.filter(s => s.enabled).length + '/' + categorySkills.length + ' 启用'">
-                        </span>
-                        <svg class="w-3.5 h-3.5 text-white/30 transition-transform" :class="open ? 'rotate-180' : ''"
-                            fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                        </svg>
-                    </div>
-                </button>
+                        <div class="flex items-center gap-3">
+                            <span
+                                class="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded border font-mono"
+                                :class="categorySkills.every(s => s.enabled) ? 'bg-[var(--stem-green-500)]/10 text-[var(--stem-green-500)] border-[var(--stem-green-500)]/20' : categorySkills.some(s => s.enabled) ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-black/40 text-white/30 border-white/5'"
+                                x-text="categorySkills.filter(s => s.enabled).length + '/' + categorySkills.length + ' ON'">
+                            </span>
+                            <svg class="w-4 h-4 text-white/30 transition-transform duration-300"
+                                :class="open ? 'rotate-180 text-white' : ''" fill="none" stroke="currentColor"
+                                viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </div>
+                    </button>
 
-                <!-- Skills in this category -->
-                <div x-show="open" x-transition.duration.150ms class="skill-group-body divide-y divide-white/5">
-                    <template x-for="skill in categorySkills" :key="skill.name">
-                        <div class="px-4 py-3">
-                            <div class="flex items-start justify-between gap-3">
-                                <div class="flex-1 min-w-0">
-                                    <!-- Name + status badge -->
-                                    <div class="flex items-center gap-2 mb-0.5">
-                                        <span class="text-white/90 text-sm font-mono" x-text="skill.name"></span>
-                                        <span x-show="!skill.enabled"
-                                            class="px-1.5 py-0.5 bg-gray-500/20 text-gray-400 text-[10px] rounded">禁用</span>
-                                    </div>
-                                    <!-- Description -->
-                                    <p class="text-xs text-white/45 line-clamp-2" x-text="skill.description"></p>
+                    <!-- Skills in category -->
+                    <div x-show="open" x-collapse class="divide-y divide-white/5 bg-black/20">
+                        <template x-for="skill in categorySkills" :key="skill.name">
+                            <div class="px-4 py-3.5 hover:bg-white/[0.03] transition-colors">
+                                <div class="flex items-start justify-between gap-4">
+                                    <div class="flex-1 min-w-0 pr-2">
+                                        <div class="flex items-center gap-2 mb-1">
+                                            <span
+                                                class="text-white text-[13px] font-bold tracking-tight font-['Outfit']"
+                                                x-text="skill.name"></span>
+                                            <span x-show="!skill.enabled"
+                                                class="px-1.5 py-0.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[9px] font-bold uppercase tracking-widest rounded font-mono">Off</span>
+                                        </div>
+                                        <p class="text-[11px] font-medium text-white/50 leading-relaxed truncate max-w-lg"
+                                            x-text="skill.description" :title="skill.description"></p>
 
-                                    <!-- Config section -->
-                                    <div x-show="skill.ui_config && skill.ui_config.length > 0" class="mt-2">
-                                        <button @click="skill._showConfig = !skill._showConfig"
-                                            class="text-blue-400/70 hover:text-blue-300 text-xs flex items-center gap-1 transition-colors">
-                                            <svg class="w-3 h-3 transition-transform" :class="{'rotate-90': skill._showConfig}"
-                                                fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-                                            </svg>
-                                            <span x-text="skill._showConfig ? '收起配置' : '配置'"></span>
-                                        </button>
-                                        <div x-show="skill._showConfig" x-transition.opacity.duration.150ms
-                                            class="mt-2 p-3 bg-black/20 rounded-lg border border-white/5 space-y-2">
-                                            <template x-for="field in skill.ui_config" :key="field.key">
-                                                <div>
-                                                    <label class="block text-[11px] text-white/60 mb-1" x-text="field.label"></label>
-                                                    <template x-if="field.type === 'text'">
-                                                        <input type="text" x-model="skill.config_values[field.key]"
-                                                            :placeholder="field.default ?? ''"
-                                                            class="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-white text-xs focus:outline-none focus:border-blue-500/50">
-                                                    </template>
-                                                    <template x-if="field.type === 'secret'">
-                                                        <input type="password" x-model="skill.config_values[field.key]"
-                                                            :placeholder="field.default ?? ''"
-                                                            class="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-white text-xs focus:outline-none focus:border-blue-500/50">
-                                                    </template>
-                                                    <template x-if="field.type === 'select'">
-                                                        <select x-model="skill.config_values[field.key]"
-                                                            class="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-white text-xs focus:outline-none">
-                                                            <template x-for="opt in field.options" :key="opt">
-                                                                <option :value="opt" x-text="opt" class="bg-gray-800"></option>
-                                                            </template>
-                                                        </select>
-                                                    </template>
-                                                    <template x-if="field.type === 'bool'">
-                                                        <label class="flex items-center gap-2 cursor-pointer">
-                                                            <input type="checkbox" x-model="skill.config_values[field.key]"
-                                                                class="w-3 h-3 rounded">
-                                                            <span class="text-xs text-white/50" x-text="field.label"></span>
-                                                        </label>
-                                                    </template>
+                                        <!-- Config section -->
+                                        <div x-show="skill.ui_config && skill.ui_config.length > 0" class="mt-2.5">
+                                            <button @click="skill._showConfig = !skill._showConfig"
+                                                class="text-blue-400 hover:text-blue-300 text-[10px] font-bold uppercase tracking-widest flex items-center gap-1.5 transition-colors group font-['Outfit'] border border-blue-500/20 bg-blue-500/5 px-2 py-1 rounded">
+                                                <svg class="w-3.5 h-3.5 transition-transform group-hover:scale-110"
+                                                    :class="{'rotate-90': skill._showConfig}" fill="none"
+                                                    stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                                        stroke-width="2" d="M9 5l7 7-7 7" />
+                                                </svg>
+                                                <span x-text="skill._showConfig ? '隐藏参数' : '编辑配置'"></span>
+                                            </button>
+
+                                            <div x-show="skill._showConfig" x-collapse
+                                                class="mt-3 p-4 bg-black/40 rounded-xl border border-white/5 space-y-4">
+                                                <template x-for="field in skill.ui_config" :key="field.key">
+                                                    <div>
+                                                        <label
+                                                            class="block text-[10px] font-bold text-white/40 uppercase tracking-widest ml-1 mb-1.5 font-['Outfit']"
+                                                            x-text="field.label"></label>
+
+                                                        <template x-if="field.type === 'text'">
+                                                            <input type="text" x-model="skill.config_values[field.key]"
+                                                                :placeholder="field.default ?? ''"
+                                                                class="skill-input w-full px-3 h-9 bg-[var(--noble-black-900)] border border-white/10 rounded-lg text-white text-[12px] focus:outline-none focus:border-[var(--stem-green-500)]/50 transition-colors placeholder-white/20">
+                                                        </template>
+
+                                                        <template x-if="field.type === 'secret'">
+                                                            <input type="password"
+                                                                x-model="skill.config_values[field.key]"
+                                                                :placeholder="field.default ?? ''"
+                                                                class="skill-input w-full px-3 h-9 bg-[var(--noble-black-900)] border border-white/10 rounded-lg text-[var(--stem-green-500)] font-mono tracking-widest text-[12px] focus:outline-none focus:border-[var(--stem-green-500)]/50 transition-colors placeholder-white/20">
+                                                        </template>
+
+                                                        <template x-if="field.type === 'select'">
+                                                            <select x-model="skill.config_values[field.key]"
+                                                                class="w-full px-3 h-9 bg-[var(--noble-black-900)] border border-white/10 rounded-lg text-white text-[12px] font-medium focus:outline-none focus:border-[var(--stem-green-500)]/50 appearance-none cursor-pointer">
+                                                                <template x-for="opt in field.options" :key="opt">
+                                                                    <option :value="opt" x-text="opt"
+                                                                        class="bg-black/80"></option>
+                                                                </template>
+                                                            </select>
+                                                        </template>
+
+                                                        <template x-if="field.type === 'bool'">
+                                                            <label
+                                                                class="flex items-center gap-2 cursor-pointer mt-1 pl-1 group">
+                                                                <input type="checkbox"
+                                                                    x-model="skill.config_values[field.key]"
+                                                                    class="w-4 h-4 rounded bg-black/40 border-white/20 text-[var(--stem-green-500)] focus:ring-[var(--stem-green-500)] focus:ring-offset-0 focus:ring-offset-transparent cursor-pointer transition-all">
+                                                                <span
+                                                                    class="text-[12px] font-bold text-white/80 group-hover:text-white transition-colors"
+                                                                    x-text="field.label"></span>
+                                                            </label>
+                                                        </template>
+                                                    </div>
+                                                </template>
+
+                                                <div class="flex items-center gap-2 pt-3 mt-1 border-t border-white/5">
+                                                    <button @click="uninstallSkill(skill.name)"
+                                                        class="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/10 rounded-lg text-[10px] uppercase tracking-widest font-bold transition-all disabled:opacity-50">
+                                                        卸载
+                                                    </button>
+                                                    <div class="flex-1"></div>
+                                                    <button @click="saveSkillConfig(skill)"
+                                                        class="px-4 py-1.5 bg-blue-500/20 hover:bg-blue-500 text-blue-400 hover:text-white border border-blue-500/20 rounded-lg text-[10px] uppercase font-bold transition-all">
+                                                        <span x-text="skill._saving ? '保存中...' : '保存配置'"></span>
+                                                    </button>
                                                 </div>
-                                            </template>
-                                            <div class="flex justify-end pt-1">
-                                                <button @click="saveSkillConfig(skill)"
-                                                    class="px-3 py-1 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded text-xs transition-colors">
-                                                    <span x-text="skill._saving ? '保存中...' : '保存'"></span>
-                                                </button>
                                             </div>
                                         </div>
                                     </div>
-                                </div>
 
-                                <!-- Toggle switch -->
-                                <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
-                                    <input type="checkbox" :checked="skill.enabled"
-                                        @change="toggleSkill(skill.name, $event.target.checked)" class="sr-only peer">
-                                    <div class="w-9 h-5 bg-gray-600/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
-                                </label>
+                                    <!-- Enable Toggle -->
+                                    <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+                                        <input type="checkbox" :checked="skill.enabled"
+                                            @change="toggleSkill(skill.name, $event.target.checked)"
+                                            class="sr-only peer">
+                                        <div
+                                            class="w-9 h-5 bg-black/40 border border-white/10 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-transparent after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white/40 peer-checked:after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[var(--stem-green-500)] peer-checked:border-[var(--stem-green-500)]">
+                                        </div>
+                                    </label>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Empty State -->
+            <div x-show="groupedSkills.length === 0"
+                class="flex flex-col items-center justify-center py-20 text-white/30">
+                <div
+                    class="w-14 h-14 mb-4 rounded-2xl bg-white/5 flex items-center justify-center border border-white/5">
+                    <svg class="w-6 h-6 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                            d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </div>
+                <p class="text-[13px] font-bold uppercase tracking-widest font-['Outfit'] text-white">未能检索到系统算子库</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════ MARKETPLACE TAB ══════════════════════════ -->
+    <div x-show="skillTab === 'marketplace'" x-transition:enter="transition ease-out duration-200"
+        x-transition:enter-start="opacity-0 translate-y-2" class="flex-1 flex flex-col overflow-hidden">
+
+        <!-- Install Message Banner -->
+        <div x-show="skillInstallMsg" class="px-6 pt-4 shrink-0" x-collapse>
+            <div :class="skillInstallMsg?.type === 'success' ? 'bg-[var(--stem-green-500)]/10 border-[var(--stem-green-500)]/30 text-[var(--stem-green-500)]' : 'bg-rose-500/10 border-rose-500/30 text-rose-400'"
+                class="flex items-center gap-3 px-4 py-3 rounded-lg border text-[11px] font-bold shadow-sm">
+                <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+                        :d="skillInstallMsg?.type === 'success' ? 'M5 13l4 4L19 7' : 'M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'" />
+                </svg>
+                <span x-text="skillInstallMsg?.text"></span>
+                <button @click="skillInstallMsg = null"
+                    class="ml-auto p-1.5 opacity-60 hover:opacity-100 transition-colors">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Search Bar + Install by URL -->
+        <div class="px-6 py-4 space-y-3 border-b border-white/5 bg-black/10 shrink-0">
+            <div class="flex gap-3">
+                <div class="relative flex-1 group">
+                    <div class="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                        <svg class="w-4 h-4 text-white/30 group-focus-within:text-[var(--stem-green-500)] transition-colors"
+                            fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                    </div>
+                    <input type="text" x-model="skillMarketSearch" placeholder="搜索技能库..."
+                        @keydown.enter="searchSkillMarketplace(skillMarketSearch)"
+                        class="skill-input w-full pl-9 pr-4 py-2 bg-black/40 border border-white/10 rounded-lg text-white text-[12px] font-medium placeholder-white/30 focus:outline-none focus:border-[var(--stem-green-500)]/50 transition-all">
+                </div>
+                <button @click="searchSkillMarketplace(skillMarketSearch)"
+                    class="px-5 py-2 bg-[var(--stem-green-500)] hover:bg-[var(--stem-green-500)]/90 text-black rounded-lg text-[11px] font-black uppercase tracking-widest transition-all shrink-0">
+                    搜索
+                </button>
+            </div>
+
+            <div class="flex gap-3">
+                <input type="text" x-model="urlInput" placeholder="粘贴 Git URL 安装..."
+                    class="skill-input flex-1 px-4 py-2 bg-black/20 border border-white/5 rounded-lg text-white text-[11px] font-medium placeholder-white/30 focus:outline-none focus:border-blue-500/40 transition-all font-mono">
+                <button @click="installSkillFromUrl(urlInput); urlInput = ''"
+                    class="px-4 py-2 bg-blue-500/10 hover:bg-blue-500 hover:text-white text-blue-400 border border-blue-500/20 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all shrink-0">
+                    安装拉取
+                </button>
+            </div>
+        </div>
+
+        <!-- Marketplace List -->
+        <div class="flex-1 overflow-y-auto custom-scrollbar px-6 py-4 space-y-3">
+
+            <!-- Loading spinner -->
+            <div x-show="skillMarketLoading" class="flex flex-col items-center justify-center py-16">
+                <div
+                    class="w-8 h-8 border-[2px] border-[var(--stem-green-500)]/20 border-t-[var(--stem-green-500)] rounded-full animate-spin mb-4">
+                </div>
+                <p class="text-white text-[12px] font-bold tracking-widest font-['Outfit']">加载中...</p>
+            </div>
+
+            <!-- No results -->
+            <div x-show="!skillMarketLoading && skillMarketplace.length === 0"
+                class="flex flex-col items-center justify-center py-16 text-white/30">
+                <div
+                    class="w-12 h-12 mb-4 rounded-xl bg-white/5 flex items-center justify-center border border-white/5">
+                    <svg class="w-6 h-6 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                            d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                </div>
+                <p class="text-[13px] font-bold uppercase tracking-wide font-['Outfit'] text-white">商店无结果</p>
+            </div>
+
+            <!-- Skill Cards -->
+            <template x-for="item in skillMarketplace" :key="item.name || item.id">
+                <div
+                    class="skill-card bg-white/[0.02] border border-white/5 rounded-xl px-4 py-3.5 hover:border-[var(--stem-green-500)]/30 hover:bg-white/[0.04] group">
+                    <div class="flex items-start gap-4">
+                        <!-- Icon -->
+                        <div
+                            class="w-10 h-10 rounded-lg bg-gradient-to-br from-[var(--stem-green-500)]/10 to-blue-500/10 border border-white/10 flex items-center justify-center shrink-0">
+                            <span class="text-[18px]">📦</span>
+                        </div>
+
+                        <!-- Info -->
+                        <div class="flex-1 min-w-0 pr-3">
+                            <div class="flex items-center gap-2 mb-1">
+                                <span class="text-[13px] font-bold text-white tracking-tight font-['Outfit']"
+                                    x-text="item.name || item.id"></span>
+                                <span x-show="item.version"
+                                    class="text-[9px] font-bold text-white/50 border border-white/10 px-1.5 py-0.5 rounded font-mono uppercase"
+                                    x-text="'v' + item.version"></span>
+                            </div>
+                            <p class="text-[11px] font-medium text-white/50 leading-snug mb-2 truncate"
+                                x-text="item.description || '暂无算子拓扑描述'"></p>
+
+                            <div class="flex items-center gap-3">
+                                <span x-show="item.category"
+                                    class="text-[9px] font-bold uppercase tracking-widest text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded"
+                                    x-text="item.category"></span>
+                                <span x-show="item.author" class="text-[10px] text-white/40 font-bold"
+                                    x-text="item.author"></span>
                             </div>
                         </div>
-                    </template>
-                </div>
-            </div>
-        </template>
 
-        <!-- Empty State -->
-        <div x-show="groupedSkills.length === 0" class="text-center py-12">
-            <p class="text-white/40 text-sm">未找到匹配的技能</p>
+                        <!-- Install Button -->
+                        <button @click="installSkillFromUrl(item.url || item.git_url || '')"
+                            :disabled="skillInstallingId === (item.name || item.id)"
+                            class="shrink-0 mt-1 px-4 py-1.5 bg-[var(--stem-green-500)]/10 hover:bg-[var(--stem-green-500)] text-[var(--stem-green-500)] hover:text-black border border-[var(--stem-green-500)]/30 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-40">
+                            <span x-text="skillInstallingId === (item.name || item.id) ? '装载中...' : '安装'"></span>
+                        </button>
+                    </div>
+                </div>
+            </template>
         </div>
     </div>
 </div>

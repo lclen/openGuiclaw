@@ -1,0 +1,214 @@
+{
+    "remember": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "search_memory": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "new_session": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "list_sessions": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "update_memory": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "delete_memory": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "list_skills": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "get_skill_info": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "install_skill": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "query_knowledge": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "ask_user": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "get_time": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "get_system_info": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "update_user_profile": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "autogui_action": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "screenshot_and_act": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "get_screenshot": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "read_docx": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "create_docx": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "read_pptx": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "create_pptx": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "web_read": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "read_file": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "write_file": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "list_dir": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "move_path": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "delete_path": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "search_files": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "browser_open": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "browser_get_snapshot": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "browser_interact": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "browser_extract_text": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "browser_scroll": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "browser_wait": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "browser_navigate": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "browser_check_state": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "browser_close": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "mcp_list_servers": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "call_mcp_tool": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "mcp_disconnect": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "mcp_list_active": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "create_plan": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "update_plan_step": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "get_plan_status": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "complete_plan": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "run_in_sandbox": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "reset_sandbox": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "list_sandboxes": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "delete_sandbox": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "schedule_task": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "create_plugin": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "execute_command": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "get_weather": {
+        "enabled": true,
+        "config_values": {}
+    }
+}
