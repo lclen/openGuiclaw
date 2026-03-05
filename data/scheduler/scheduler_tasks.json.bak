@@ -14,11 +14,33 @@
     "enabled": true,
     "status": "scheduled",
     "deletable": false,
-    "last_run": "2026-03-04T04:00:01.435188",
-    "next_run": "2026-03-05T04:00:00",
-    "run_count": 1,
+    "last_run": "2026-03-05T04:00:00.033310",
+    "next_run": "2026-03-06T04:00:00",
+    "run_count": 2,
     "fail_count": 0,
     "created_at": "2026-03-03T12:12:14.283034",
-    "updated_at": "2026-03-04T04:00:01.435188"
+    "updated_at": "2026-03-05T04:00:00.033310"
+  },
+  {
+    "id": "system_memory_consolidate",
+    "name": "记忆整理",
+    "description": "每3小时自动扫描近7天历史会话，提取并写入新的长期记忆，保持知识库持续更新",
+    "trigger_type": "cron",
+    "trigger_config": {
+      "cron": "0 */3 * * *"
+    },
+    "task_type": "system",
+    "reminder_message": null,
+    "prompt": "",
+    "action": "system:memory_consolidate",
+    "enabled": true,
+    "status": "scheduled",
+    "deletable": false,
+    "last_run": "2026-03-05T09:02:23.052627",
+    "next_run": "2026-03-05T12:00:00",
+    "run_count": 6,
+    "fail_count": 0,
+    "created_at": "2026-03-04T20:32:00.649805",
+    "updated_at": "2026-03-05T09:02:23.052627"
   }
 ]

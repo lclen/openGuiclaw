@@ -13,6 +13,10 @@ import os
 # Ensure project root is on Python path
 sys.path.insert(0, os.path.dirname(__file__))
 
+# 启动前自动安装依赖
+from core import bootstrap
+bootstrap.run()
+
 from pathlib import Path
 from core.agent import Agent
 from core.context import ContextManager, MODE_SILENT, MODE_NORMAL, MODE_LIVELY

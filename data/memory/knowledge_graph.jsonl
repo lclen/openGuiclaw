@@ -116,3 +116,7 @@
 {"subject": "AI", "relation": "执行", "object": "纯 API 抓取策略", "source": "journal:2026-03-03", "ts": "2026-03-04 00:06:12"}
 {"subject": "用户", "relation": "询问", "object": "月全食是否已经开始", "source": "journal:2026-03-03", "ts": "2026-03-04 00:06:12"}
 {"subject": "AL", "relation": "战胜", "object": "IG", "source": "journal:2026-03-03", "ts": "2026-03-04 00:06:12"}
+{"subject": "用户", "relation": "要求使用", "object": "agent-browser", "source": "journal:2026-03-04", "ts": "2026-03-05 00:07:51"}
+{"subject": "npm", "relation": "用于安装", "object": "agent-browser", "source": "journal:2026-03-04", "ts": "2026-03-05 00:07:51"}
+{"subject": "browser_open", "relation": "成功加载", "object": "哔哩哔哩", "source": "journal:2026-03-04", "ts": "2026-03-05 00:07:51"}
+{"subject": "系统", "relation": "管理", "object": "记忆库", "source": "journal:2026-03-04", "ts": "2026-03-05 00:07:51"}

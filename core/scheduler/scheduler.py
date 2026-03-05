@@ -186,11 +186,12 @@ class TaskScheduler:
         return sorted(tasks, key=lambda t: t.next_run or datetime.max)
 
     async def trigger_now(self, task_id: str) -> bool:
-        """立即触发任务"""
+        """立即触发任务（后台异步执行，立即返回）"""
         task = self._tasks.get(task_id)
         if not task:
             return False
-        await self._execute_task(task)
+        # 在后台运行，不阻塞 HTTP 响应
+        asyncio.create_task(self._run_task_safe(task))
         return True
 
     async def _scheduler_loop(self) -> None:

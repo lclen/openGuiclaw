@@ -59,11 +59,13 @@
     <div class="px-6 py-4 border-b border-white/5 bg-black/40 shrink-0">
         <div class="flex items-center justify-between">
             <div>
-                <h2 class="text-[15px] font-bold text-white tracking-tight font-['Outfit'] flex items-center gap-2">
-                    <span class="w-1.5 h-1.5 rounded-full bg-[var(--stem-green-500)] primary-glow animate-pulse"></span>
-                    动态算子池 (Skills)
+                <h2 class="text-[14px] font-bold text-white tracking-wide uppercase flex items-center gap-2">
+                    <span
+                        class="w-1.5 h-1.5 rounded-full bg-[var(--stem-green-500)] shadow-[0_0_8px_rgba(182,240,89,0.5)] animate-pulse"></span>
+                    技能库 (Skills)
                 </h2>
-                <p class="text-[var(--noble-black-400)] text-[11px] font-medium mt-0.5 flex items-center gap-1.5">
+                <p
+                    class="text-[var(--noble-black-400)] text-[11px] font-medium tracking-tight mt-0.5 flex items-center gap-1.5">
                     <span x-text="skills.filter(s => s.enabled).length + ' 活动节点'"></span>
                     <span class="opacity-30">/</span>
                     <span x-text="skills.length + ' 总挂载'"></span>

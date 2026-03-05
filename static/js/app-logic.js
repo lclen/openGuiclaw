@@ -164,6 +164,7 @@
             this.loadChatEndpoints();
             this.loadRoleEndpoints();
             this.loadMemories();
+            this.loadTokenStats(this.tokenPeriod);
         },
 
         // ── loadRoleEndpoints ──────────────────────────────────────────────
@@ -237,9 +238,93 @@
                 const r = await fetch('/api/memory');
                 if (r.ok) {
                     const data = await r.json();
-                    this.memoryItems = data.memories || [];
+                    this.memoryItems = (data.memories || []).map(m => ({
+                        ...m,
+                        _selected: false,
+                        _editing: false,
+                        _editBuffer: ''
+                    }));
                 }
             } catch (e) { console.error('Failed to load memories:', e); }
+        },
+
+        get selectedMemoryCount() {
+            return this.memoryItems.filter(m => m._selected).length;
+        },
+
+        get allMemoriesSelected() {
+            return this.memoryItems.length > 0 && this.selectedMemoryCount === this.memoryItems.length;
+        },
+
+        toggleMemorySelectAll() {
+            const select = !this.allMemoriesSelected;
+            this.memoryItems.forEach(m => m._selected = select);
+        },
+
+        async batchDeleteMemories() {
+            const ids = this.memoryItems.filter(m => m._selected).map(m => m.id);
+            if (ids.length === 0) return;
+            if (!confirm(`确定要删除选中的 ${ids.length} 条记忆吗？`)) return;
+
+            try {
+                const r = await fetch('/api/memory/batch_delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids })
+                });
+                if (r.ok) {
+                    this.pushLog('status', `已删除 ${ids.length} 条记忆`);
+                    await this.loadMemories();
+                } else {
+                    this.pushLog('error', '批量删除记忆失败');
+                }
+            } catch (e) { console.error(e); }
+        },
+
+        async deleteMemory(id) {
+            if (!id) return;
+            if (!confirm('确定要删除这条记忆吗？')) return;
+            this.pushLog('status', `正在删除记忆...`);
+            try {
+                const r = await fetch(`/api/memory/${id}`, { method: 'DELETE' });
+                if (r.ok) {
+                    this.pushLog('status', '记忆已成功删除');
+                    await this.loadMemories();
+                } else {
+                    this.pushLog('error', '删除记忆失败 (API 错误)');
+                }
+            } catch (e) {
+                console.error(e);
+                this.pushLog('error', '网络异常');
+            }
+        },
+
+        startEditMemory(item) {
+            item._editBuffer = item.content;
+            item._editing = true;
+        },
+
+        cancelEditMemory(item) {
+            item._editing = false;
+        },
+
+        async saveMemoryEdit(item) {
+            try {
+                const r = await fetch(`/api/memory/${item.id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: item._editBuffer })
+                });
+                if (r.ok) {
+                    this.pushLog('status', '记忆已更新');
+                    item.content = item._editBuffer;
+                    item._editing = false;
+                    // re-fetch to ensure sync (optional)
+                    // await this.loadMemories();
+                } else {
+                    this.pushLog('error', '更新记忆失败');
+                }
+            } catch (e) { console.error(e); }
         },
 
 
@@ -1559,6 +1644,7 @@
                 this.isReceiving = false;
                 this.currentController = null;
                 this.scrollToBottom();
+                this.loadTokenStats(this.tokenPeriod);
             }
         },
 

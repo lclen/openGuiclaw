@@ -68,6 +68,8 @@ async def lifespan(app: FastAPI):
         from core.agent import Agent
         from core.context import ContextManager
         from core.plugin_manager import PluginManager
+        from core import bootstrap
+        bootstrap.run()
         
         # 1. Load config
         config_path = "config.json"
@@ -76,27 +78,24 @@ async def lifespan(app: FastAPI):
         agent = Agent(config_path=config_path, data_dir="data", auto_evolve=True)
         agent.event_queue = _ctx_event_queue  # Thread-safe queue for broadcasting system events
         
-        # 3. Load core skills (previously only in main.py)
-        try:
-            from skills import basic
-            agent.register_skill_module(basic)
-            logger.info("  [OK] 技能加载: basic")
-        except Exception as e:
-            logger.warning(f"  [WARN] Basic 技能加载失败: {e}")
-
-        try:
-            from skills import autogui
-            agent.register_skill_module(autogui)
-            logger.info("  [OK] 技能加载: autogui")
-        except Exception as e:
-            logger.warning(f"  [WARN] AutoGUI 加载失败: {e}")
-
-        try:
-            from skills import web_search
-            agent.register_skill_module(web_search)
-            logger.info("  [OK] 技能加载: web_search")
-        except Exception as e:
-            logger.warning(f"  [WARN] Web 技能加载失败: {e}")
+        # 3. Load core skills
+        _skill_modules = [
+            ("basic",        "basic (ask_user, get_time, ...)"),
+            ("autogui",      "autogui (autogui_action, screenshot_and_act, ...)"),
+            ("web_search",   "web_search (web_fetch)"),
+            ("web_reader",   "web_reader (web_read)"),
+            ("system_tools", "system_tools (execute_command)"),
+            ("file_manager", "file_manager (read_file, write_file, list_dir, ...)"),
+            ("office_tools", "office_tools (read_docx, create_pptx, ...)"),
+        ]
+        for mod_name, label in _skill_modules:
+            try:
+                import importlib
+                mod = importlib.import_module(f"skills.{mod_name}")
+                agent.register_skill_module(mod)
+                logger.info(f"  [OK] 技能加载: {label}")
+            except Exception as e:
+                logger.warning(f"  [WARN] 技能加载失败 [{mod_name}]: {e}")
 
         # 4. Init Plugins
         plugin_manager = PluginManager(skill_manager=agent.skills, plugins_dir="plugins")
@@ -200,6 +199,8 @@ async def lifespan(app: FastAPI):
             action = task.action or ""
             if action == "system:daily_selfcheck":
                 return await _system_daily_selfcheck(push_fn)
+            if action == "system:memory_consolidate":
+                return await _system_memory_consolidate(push_fn)
             return False, f"Unknown system action: {action}"
 
         async def _system_daily_selfcheck(push_fn) -> tuple[bool, str]:
@@ -296,6 +297,115 @@ async def lifespan(app: FastAPI):
             logger.info(f"System selfcheck completed: {status}")
             return True, status
 
+        async def _system_memory_consolidate(push_fn) -> tuple[bool, str]:
+            """
+            记忆整理：扫描近 N 天未抽取过的历史会话，
+            调用 MemoryExtractor 批量提取新记忆，生成摘要报告推送到聊天。
+            """
+            import glob
+            from datetime import datetime, timedelta
+
+            ag = app_state.get("agent")
+            if not ag or not hasattr(ag, "memory_extractor") or not hasattr(ag, "memory"):
+                return False, "Agent or memory subsystem not ready"
+
+            push_fn({"type": "chat_event", "role": "system",
+                     "content": "🧠 [记忆整理] 开始扫描历史会话…"})
+
+            # ── 收集近 7 天的会话文件 ──────────────────────────────────────
+            cutoff = datetime.now() - timedelta(days=7)
+            session_files = sorted(
+                Path("data/sessions").glob("*.json"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True
+            )
+
+            # 已处理 session ID（跳过当前活跃会话）
+            current_sid = ag.sessions.current.session_id if ag.sessions.current else None
+            last_extracted = getattr(ag, "_last_extracted_session_id", None)
+
+            scanned = 0
+            written = 0
+            skipped = 0
+
+            for sf in session_files:
+                try:
+                    mtime = datetime.fromtimestamp(sf.stat().st_mtime)
+                    if mtime < cutoff:
+                        break  # 文件已按 mtime 倒序排列，跳过更早的
+
+                    with open(sf, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+
+                    sid = data.get("session_id", sf.stem)
+                    messages = data.get("messages", [])
+
+                    # 跳过当前活跃会话、空会话
+                    if sid == current_sid or not messages:
+                        skipped += 1
+                        continue
+
+                    # 只保留 user/assistant 消息
+                    chat_msgs = [
+                        m for m in messages
+                        if m.get("role") in ("user", "assistant")
+                    ]
+                    if len(chat_msgs) < 2:
+                        skipped += 1
+                        continue
+
+                    scanned += 1
+
+                    # 在线程池中执行阻塞的 LLM 调用
+                    loop = asyncio.get_running_loop()
+                    new_items = await loop.run_in_executor(
+                        None,
+                        ag.memory_extractor.extract_from_conversation,
+                        chat_msgs
+                    )
+                    written += len(new_items) if new_items else 0
+
+                except Exception as e:
+                    logger.warning(f"Memory consolidate: skipped {sf.name}: {e}")
+                    skipped += 1
+
+            # ── 生成摘要报告 ─────────────────────────────────────────────
+            total_memories = len(ag.memory.list_all())
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+            # 各类记忆分类统计
+            type_meta = [
+                ("fact",       "客观事实"),
+                ("preference", "用户偏好"),
+                ("rule",       "规则约束"),
+                ("skill",      "技能模式"),
+                ("error",      "待规避错误"),
+                ("experience", "可复用经验"),
+            ]
+            type_rows = "\n".join(
+                f"| `{t}` | {desc} | {len(ag.memory.list_by_type(t))} |"
+                for t, desc in type_meta
+            )
+
+            report = (
+                f"## 🧠 记忆整理报告 — {ts}\n\n"
+                f"- **扫描会话**: {scanned} 个　**跳过**: {skipped} 个　**写入新记忆**: {written} 条\n\n"
+                f"| 类型 | 说明 | 当前总量 |\n"
+                f"|------|------|---------|\n"
+                f"{type_rows}\n\n"
+                f"{('✅ 整理完成，记忆库已更新。' if written > 0 else '✅ 整理完成，无新增内容（已是最新）。')}"
+                f"  记忆库共 **{total_memories}** 条。"
+            )
+
+            if ag:
+                ag.sessions.current.add_message("assistant", report)
+                ag.sessions.save()
+            push_fn({"type": "chat_event", "role": "assistant", "content": report})
+
+            status = f"扫描 {scanned} 个会话，写入 {written} 条新记忆"
+            logger.info(f"Memory consolidate completed: {status}")
+            return True, status
+
         task_scheduler = TaskScheduler(
             storage_path=Path("data/scheduler"),
             executor=_scheduled_task_runner
@@ -336,6 +446,40 @@ async def lifespan(app: FastAPI):
                     changed = True
                 if changed:
                     task_scheduler._save_tasks()
+
+        # ── 注册内置任务：记忆整理 ────────────────────────────────────
+        existing_mem_consolidate = next(
+            (t for t in task_scheduler.list_tasks() if t.action == "system:memory_consolidate"), None
+        )
+        if not existing_mem_consolidate:
+            mem_consolidate_task = ScheduledTask(
+                id="system_memory_consolidate",
+                name="记忆整理",
+                description="每3小时自动扫描近7天历史会话，提取并写入新的长期记忆，保持知识库持续更新",
+                trigger_type=TriggerType.CRON,
+                trigger_config={"cron": "0 */3 * * *"},
+                task_type=TaskType.SYSTEM,
+                prompt="",
+                action="system:memory_consolidate",
+                deletable=False,
+            )
+            await task_scheduler.add_task(mem_consolidate_task)
+            logger.info("Registered built-in task: system_memory_consolidate (every 3h)")
+        else:
+            # 确保已有任务不可删除，且 cron 为预期值
+            _expected_cron = "0 */3 * * *"
+            changed = False
+            if existing_mem_consolidate.deletable:
+                existing_mem_consolidate.deletable = False
+                changed = True
+            current_cron = existing_mem_consolidate.trigger_config.get("cron", "")
+            if current_cron != _expected_cron:
+                existing_mem_consolidate.trigger_config["cron"] = _expected_cron
+                existing_mem_consolidate.description = "每3小时自动扫描近7天历史会话，提取并写入新的长期记忆，保持知识库持续更新"
+                changed = True
+                logger.info(f"Updated memory_consolidate cron: {current_cron!r} → {_expected_cron!r}")
+            if changed:
+                task_scheduler._save_tasks()
         
         logger.info("OpenAkita Server initialized successfully.")
         
@@ -389,6 +533,37 @@ async def health_check():
     """Simple health check endpoint."""
     return {"status": "ok"}
 
+
+@app.get("/api/events")
+async def sse_events(request: Request):
+    """Server-Sent Events endpoint for real-time frontend updates.
+
+    Subscribers receive events pushed by background tasks (scheduler, context, etc.)
+    via the shared _ctx_event_queue → _sse_subscribers bridge.
+    """
+    async def event_generator():
+        q: asyncio.Queue = asyncio.Queue(maxsize=64)
+        with _sse_lock:
+            _sse_subscribers.add(q)
+        try:
+            # Send an initial heartbeat so the browser connection establishes fast
+            yield {"data": json.dumps({"type": "connected"})}
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=20)
+                    yield {"data": json.dumps(event, ensure_ascii=False)}
+                except asyncio.TimeoutError:
+                    # Heartbeat keepalive (prevents proxy/browser from closing idle connection)
+                    yield {"data": json.dumps({"type": "heartbeat"})}
+        except asyncio.CancelledError:
+            pass
+        finally:
+            with _sse_lock:
+                _sse_subscribers.discard(q)
+
+    return EventSourceResponse(event_generator())
 
 
 @app.get("/api/config")
@@ -736,7 +911,9 @@ async def get_session(session_id: str):
     with open(fpath, "r", encoding="utf-8") as f:
         data = json.load(f)
     # Passthrough all displayable roles to the frontend (it decides how to render each)
-    EXCLUDED_ROLES = {"system", "tool"}  # internal scaffolding only; never shown
+    # "tool" role messages carry tool call results and must be sent to the frontend
+    # so that loadSession() can match them to their parent tool_call blocks.
+    EXCLUDED_ROLES = {"system"}  # internal scaffolding only; never shown in chat
     messages = [m for m in data.get("messages", []) if m.get("role") not in EXCLUDED_ROLES]
     return {"session_id": session_id, "messages": messages}
 
@@ -781,6 +958,9 @@ class MemoryUpdateRequest(BaseModel):
     type: Optional[str] = None
     tags: Optional[list] = None
 
+class MemoryBatchDeleteRequest(BaseModel):
+    ids: list[str]
+
 @app.get("/api/memory")
 async def list_memory(type: Optional[str] = None, q: Optional[str] = None):
     """Return memory items, optionally filtered by type or keyword."""
@@ -814,7 +994,7 @@ async def delete_memory(memory_id: str):
     ok = agent.memory.delete(memory_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Memory not found")
-    return {"ok": True}
+    return {"status": "success"}
 
 @app.put("/api/memory/{memory_id}")
 async def update_memory(memory_id: str, req: MemoryUpdateRequest):
@@ -830,7 +1010,19 @@ async def update_memory(memory_id: str, req: MemoryUpdateRequest):
     )
     if not ok:
         raise HTTPException(status_code=404, detail="Memory not found")
-    return {"ok": True}
+    return {"status": "success"}
+
+@app.post("/api/memory/batch_delete")
+async def batch_delete_memory(req: MemoryBatchDeleteRequest):
+    """Batch delete memories."""
+    agent = app_state.get("agent")
+    if not agent or not agent.memory:
+        raise HTTPException(status_code=503, detail="Memory not available")
+    deleted_count = 0
+    for mid in req.ids:
+        if agent.memory.delete(mid):
+            deleted_count += 1
+    return {"status": "success", "deleted_count": deleted_count}
 
 @app.get("/api/persona")
 async def get_persona():
@@ -1305,6 +1497,7 @@ async def uninstall_skill(request: SkillUninstallRequest):
         logger.warning(f"Failed to remove {request.name} from registry: {e}")
 
     return {"status": "success", "message": f"Skill '{request.name}' uninstalled"}
+
 
 @app.get("/api/token-stats")
 async def get_token_stats(period: str = "all"):

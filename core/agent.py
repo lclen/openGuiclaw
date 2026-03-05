@@ -34,11 +34,10 @@ BUILTIN_SYSTEM_SUFFIX_BASE = """
 ---
 # 内置技能 (Always available)
 - **remember**: 将重要信息写入长期记忆。
-- **recall**: 根据关键词查询长期记忆。
+- **search_memory**: 根据关键词并发搜索长期记忆、日记、对话日志、知识图谱。
 - **new_session**: 开启一个全新的对话（当前对话将被保存）。
 - **list_sessions**: 列出所有历史会话。
 - **web_fetch(url)**: 抓取指定网页 URL 的正文，用于阅读具体页面内容。
-- **search_journal(query)**: 搜索过去的每日日志，回忆你以前做过什么。
 - **query_knowledge(entity)**: 查询知识图谱，获取实体（人/事/物）之间的关系。
 - **内置联网搜索**: 当你需要查询实时信息（天气、新闻、股价等），可以直接搜索，无需调用额外工具。
 
@@ -1670,8 +1669,18 @@ class Agent:
                     )
                 )
             except Exception as e:
-                yield _yield_event({"type": "error", "content": f"模型调用报错: {e}"})
-                break
+                error_msg = f"⚠️ 模型请求异常，重试中... ({type(e).__name__}: {e})"
+                yield _yield_event({"type": "error", "content": error_msg})
+                if consecutive_errors >= 2:
+                    final_response = f"❌ 模型调用持续失败，已中止。错误: {e}"
+                    session.add_message("assistant", final_response)
+                    self.sessions.save()
+                    yield _yield_event({"type": "message", "content": ""})
+                    break
+                consecutive_errors += 1
+                # 附加错误提示到 messages，让模型感知并尝试恢复
+                messages.append({"role": "user", "content": f"[系统] 上次请求失败: {e}，请简化你的输出后重试。"})
+                continue
 
             self._record_usage(getattr(response, "usage", None), current_model)
 
@@ -1827,10 +1836,13 @@ class Agent:
                         yield _yield_event({"type": "status", "content": f"🔄 检测到失败，正在尝试新方案（{rollback_reason}）..."})
                         continue
                     else:
+                        # 回滚次数耗尽 — 输出错误消息给用户，并终止
                         final_response = f"⚠️ **执行中止**：{rollback_reason}，且已达到最大回滚次数。建议检查工具配置后重试。"
+                        session.add_message("assistant", final_response)
                         self.sessions.save()
+                        yield _yield_event({"type": "message_chunk", "content": final_response})
                         yield _yield_event({"type": "message", "content": ""})
-                        break
+                        return
 
                 if round_had_error:
                     consecutive_errors += 1
@@ -1849,13 +1861,11 @@ class Agent:
             yield _yield_event({"type": "message", "content": ""})
             break
 
-        if not final_response:
+        if final_response is None:
             final_response = "（已完成工具操作，无额外回复。）"
-            # We don't necessarily need to add this to the session if the previous rounds
-            # already covered the tools, but for UI finalization it's good to have.
-            # Only add if session is empty of assistant responses in this turn? 
-            # Actually, standardizing on loop-based additions is better.
-            
+            # 如果循环结束后没有任何输出，确保前端能收到结束信号
+            yield _yield_event({"type": "message", "content": ""})
+
         self.sessions.save()
 
         # Async memory extraction (non-blocking)
