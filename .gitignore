@@ -22,25 +22,32 @@ bin-node/node.exe
 bin-node/node_modules/
 
 # Runtime data (user-specific, not source)
-data/sessions/
-data/memory/
-data/diary/
-data/journals/
-data/identities/
-data/plans/
-data/scheduler/
-data/screenshots/
-data/consolidation/
-data/token_usage.db
-data/scene_memory*.jsonl
-data/vrm_preferences.json
+data/
+# 如果需要保留目录结构，可以取消下面注释并确保 data/ 下有相应 .gitkeep
+# !data/.gitkeep
+
+
+# Runtime output & logs
+logs/
+.playwright-mcp/
+*.log
+
+# Testing
+.pytest_cache/
+
+# Archives & Temporary dev files
+archive/
+*.pen
 
 # Build output
 output/
 
 # Workspace files
 *.code-workspace
+.vscode/
+.idea/
 
 # OS
 .DS_Store
 Thumbs.db
+
