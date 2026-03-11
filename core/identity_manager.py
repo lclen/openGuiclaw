@@ -10,7 +10,7 @@ Manages the data/identity/ directory with three Markdown files:
 import json
 import re
 import shutil
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -57,19 +57,35 @@ class IdentityManager:
             )
 
     def _update_timestamp(self, path: Path) -> None:
-        """Replace or insert the <!-- updated: YYYY-MM-DD --> comment in a file."""
+        """Replace or insert the timestamp in a file.
+        
+        Supports two formats:
+        1. <!-- updated: YYYY-MM-DD --> (for HABITS.md, AGENT.md)
+        2. *最后更新: YYYY-MM-DD HH:MM* (for USER.md)
+        """
         text = self._read(path)
-        ts = f"<!-- updated: {self._today()} -->"
-        pattern = r"<!-- updated: \d{4}-\d{2}-\d{2}[^>]* -->"
-        if re.search(pattern, text):
-            text = re.sub(pattern, ts, text, count=1)
+        today = self._today()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        
+        # Try USER.md format first
+        user_pattern = r"\*最后更新: [^\*]+\*"
+        if re.search(user_pattern, text):
+            text = re.sub(user_pattern, f"*最后更新: {now}*", text)
         else:
-            lines = text.splitlines(keepends=True)
-            if lines:
-                lines.insert(1, ts + "\n")
-                text = "".join(lines)
+            # Try comment format
+            comment_pattern = r"<!-- updated: \d{4}-\d{2}-\d{2}[^>]* -->"
+            ts = f"<!-- updated: {today} -->"
+            if re.search(comment_pattern, text):
+                text = re.sub(comment_pattern, ts, text, count=1)
             else:
-                text = ts + "\n" + text
+                # Insert after first line (usually the title)
+                lines = text.splitlines(keepends=True)
+                if lines:
+                    lines.insert(1, ts + "\n")
+                    text = "".join(lines)
+                else:
+                    text = ts + "\n" + text
+        
         self._write(path, text)
 
     # ------------------------------------------------------------------
@@ -77,14 +93,41 @@ class IdentityManager:
     # ------------------------------------------------------------------
 
     def update_user(self, key: str, value: str) -> None:
-        """Update or insert a key-value pair in USER.md."""
+        """Update or insert a key-value pair in USER.md.
+        
+        Supports both simple list format and structured sections.
+        If key exists, replaces it. If not, appends to Basic Information section.
+        """
         text = self._read(self.user_path)
         pattern = rf"^- \*\*{re.escape(key)}\*\*: .*$"
         new_line = f"- **{key}**: {value}"
+        
         if re.search(pattern, text, flags=re.MULTILINE):
+            # Key exists, replace it
             text = re.sub(pattern, new_line, text, flags=re.MULTILINE)
         else:
-            text = text.rstrip("\n") + f"\n{new_line}\n"
+            # Key doesn't exist, insert in Basic Information section
+            lines = text.split('\n')
+            in_basic = False
+            last_item_idx = -1
+            
+            for i, line in enumerate(lines):
+                if '## Basic Information' in line:
+                    in_basic = True
+                elif line.startswith('##') and in_basic:
+                    # Found next section, stop
+                    break
+                elif in_basic and line.startswith('- **'):
+                    last_item_idx = i
+            
+            if last_item_idx >= 0:
+                # Insert after the last item in Basic Information
+                lines.insert(last_item_idx + 1, new_line)
+                text = '\n'.join(lines)
+            else:
+                # Fallback: append to end
+                text = text.rstrip("\n") + f"\n{new_line}\n"
+        
         self._write(self.user_path, text)
         self._update_timestamp(self.user_path)
 

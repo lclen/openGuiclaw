@@ -92,12 +92,13 @@ def _extract_memories(journal_content: str, date_str: str) -> List[str]:
     # 1. 更新用户档案（USER.md）
     for pu in result["profile_updates"]:
         layer = pu["layer"]  # objective | subjective
-        key = pu["key"]
+        key = pu["key"]      # 必须从预定义列表中选择
         value = pu["value"]
         
         if layer == "subjective":
             identity.append_habit(f"- **{key}**: {value}")
         else:
+            # 智能更新 USER.md（支持结构化 Markdown）
             identity.update_user(key, value)
         
         saved.append(f"[档案更新] {layer}.{key}: {value}")
@@ -121,6 +122,68 @@ def _extract_memories(journal_content: str, date_str: str) -> List[str]:
     
     return saved
 ```
+
+#### USER.md 更新机制（v2.0）
+
+**格式**：采用 OpenAkita 风格的结构化 Markdown
+
+```markdown
+# User Profile
+
+## Basic Information
+
+- **称呼**: [待学习]
+- **工作领域**: [待学习]
+- **主要语言**: 中文
+- **时区**: [待学习]
+
+## Technical Stack
+
+### Preferred Languages
+
+[待学习]
+
+### Development Environment
+
+- **OS**: [待学习]
+- **IDE**: [待学习]
+- **Shell**: [待学习]
+
+## Preferences
+
+### Communication Style
+
+- **详细程度**: [待学习]
+- **代码注释**: [待学习]
+
+...
+```
+
+**更新逻辑**（`identity_manager.update_user()`）：
+
+1. 如果 key 已存在（如 `称呼`），直接替换该行
+2. 如果 key 不存在，插入到 Basic Information 章节的最后一个 `- **` 行之后
+3. 自动更新底部时间戳：`*最后更新: 2026-03-11 15:30*`
+
+**LLM 提取约束**（`EXTRACTION_PROMPT`）：
+
+```python
+### 关于 layer 的判断依据：
+- **objective**（客观身份）：客观存在的事实。
+  key 必须从以下列表中选择（严格匹配）：
+  称呼、工作领域、主要语言、时区、OS、IDE、Shell、
+  详细程度、代码注释、解释方式、命名约定、格式化工具、
+  测试框架、工作时间、响应速度偏好、确认需求
+  
+- **subjective**（主观偏好）：非实体的规矩或习惯。
+```
+
+**关键改进**：
+
+- ✅ 强制 LLM 使用预定义的中文 key，避免 key 不匹配
+- ✅ 支持结构化 Markdown 格式，比简单列表更易读
+- ✅ 智能插入位置（Basic Information 章节末尾）
+- ✅ 双时间戳格式支持（comment 和 USER.md 底部）
 
 ### 4. 知识图谱提取
 

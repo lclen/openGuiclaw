@@ -21,16 +21,67 @@ IdentityManager
 
 ### 1. 文件结构
 
-**USER.md**（用户档案）：
-```markdown
-# 用户档案 (USER)
-<!-- updated: 2026-03-11 -->
+**USER.md**（用户档案 v2.0）：
 
-- **姓名**: 张三
-- **年龄**: 25
-- **职业**: 软件工程师
-- **设备**: Windows 11 + VSCode
-- **偏好编辑器**: Vim
+采用 OpenAkita 风格的结构化 Markdown 格式，比简单列表更易读：
+
+```markdown
+# User Profile
+<!--
+参考来源:
+- GitHub Copilot Memory
+- ai-agent-memory-system
+
+此文件由 OpenGuiclaw 自动学习和更新，记录用户的偏好和习惯。
+-->
+
+## Basic Information
+
+- **称呼**: [待学习]
+- **工作领域**: [待学习]
+- **主要语言**: 中文
+- **时区**: [待学习]
+
+## Technical Stack
+
+### Preferred Languages
+
+[待学习]
+
+### Frameworks & Tools
+
+[待学习]
+
+### Development Environment
+
+- **OS**: [待学习]
+- **IDE**: [待学习]
+- **Shell**: [待学习]
+
+## Preferences
+
+### Communication Style
+
+- **详细程度**: [待学习]
+- **代码注释**: [待学习]
+- **解释方式**: [待学习]
+
+### Code Style
+
+- **命名约定**: [待学习]
+- **格式化工具**: [待学习]
+- **测试框架**: [待学习]
+
+### Work Habits
+
+- **工作时间**: [待学习]
+- **响应速度偏好**: [待学习]
+- **确认需求**: [待学习]
+
+---
+
+*此文件由 OpenGuiclaw 自动维护。用户也可以手动编辑以提供更准确的信息。*
+*最后更新: 2026-03-11 15:30*
 ```
 
 **HABITS.md**（交互习惯）：
@@ -62,16 +113,77 @@ IdentityManager
 - 遇到错误时自动重试
 ```
 
-### 2. 用户档案管理
+### 2. 用户档案管理（v2.0）
+
+**智能更新机制**：
 
 ```python
-# 更新用户信息
-identity.update_user("姓名", "张三")
-identity.update_user("职业", "软件工程师")
+# 更新用户信息（自动处理结构化 Markdown）
+identity.update_user("称呼", "张三")
+identity.update_user("工作领域", "AI 开发")
+identity.update_user("OS", "Windows 11")
 
 # 读取用户信息
 user_data = identity.get_user()
-# {"姓名": "张三", "职业": "软件工程师", ...}
+# {"称呼": "张三", "工作领域": "AI 开发", "OS": "Windows 11", ...}
+```
+
+**更新逻辑**：
+
+1. 如果 key 已存在（如 `称呼`），直接替换该行
+2. 如果 key 不存在，插入到 `## Basic Information` 章节的最后一个 `- **` 行之后
+3. 自动更新底部时间戳：`*最后更新: 2026-03-11 15:30*`
+
+**预定义 Key 列表**（与 `self_evolution.py` 的 `EXTRACTION_PROMPT` 保持一致）：
+
+```python
+ALLOWED_KEYS = [
+    "称呼", "工作领域", "主要语言", "时区",
+    "OS", "IDE", "Shell",
+    "详细程度", "代码注释", "解释方式",
+    "命名约定", "格式化工具", "测试框架",
+    "工作时间", "响应速度偏好", "确认需求"
+]
+```
+
+**实现细节**：
+
+```python
+def update_user(self, key: str, value: str) -> None:
+    """Update or insert a key-value pair in USER.md.
+    
+    Supports structured Markdown format with sections.
+    """
+    text = self._read(self.user_path)
+    pattern = rf"^- \*\*{re.escape(key)}\*\*: .*$"
+    new_line = f"- **{key}**: {value}"
+    
+    if re.search(pattern, text, flags=re.MULTILINE):
+        # Key exists, replace it
+        text = re.sub(pattern, new_line, text, flags=re.MULTILINE)
+    else:
+        # Key doesn't exist, insert in Basic Information section
+        lines = text.split('\n')
+        in_basic = False
+        last_item_idx = -1
+        
+        for i, line in enumerate(lines):
+            if '## Basic Information' in line:
+                in_basic = True
+            elif line.startswith('##') and in_basic:
+                break
+            elif in_basic and line.startswith('- **'):
+                last_item_idx = i
+        
+        if last_item_idx >= 0:
+            lines.insert(last_item_idx + 1, new_line)
+            text = '\n'.join(lines)
+        else:
+            # Fallback: append to end
+            text = text.rstrip("\n") + f"\n{new_line}\n"
+    
+    self._write(self.user_path, text)
+    self._update_timestamp(self.user_path)
 ```
 
 ### 3. 习惯管理
@@ -99,23 +211,64 @@ prompt = identity.build_prompt()
 # 返回格式：
 # AGENT.md 内容
 # 
-# USER.md 内容
+# USER.md 内容（完整的结构化 Markdown）
 # 
 # HABITS.md 内容
 # 
-# # 核心记忆
+# # 核心记忆（来自 scene_memory.jsonl）
 # ## 偏好
 # - 用户喜欢简洁的回复
 # ## 规则
 # - 所有文件必须 UTF-8 编码
 ```
 
-### 5. 自动时间戳
+**注意**：USER.md 会完整注入，包括所有章节和占位符。LLM 会自动忽略 `[待学习]` 占位符。
+
+### 5. 自动时间戳（双格式支持）
 
 ```python
 # 每次更新时自动更新时间戳
-identity.update_user("姓名", "张三")
-# USER.md 中的 <!-- updated: YYYY-MM-DD --> 会自动更新
+identity.update_user("称呼", "张三")
+
+# USER.md 底部的时间戳会自动更新：
+# *最后更新: 2026-03-11 15:30*
+
+# HABITS.md 和 AGENT.md 使用 comment 格式：
+# <!-- updated: 2026-03-11 -->
+```
+
+**实现细节**：
+
+```python
+def _update_timestamp(self, path: Path) -> None:
+    """Replace or insert the timestamp in a file.
+    
+    Supports two formats:
+    1. <!-- updated: YYYY-MM-DD --> (for HABITS.md, AGENT.md)
+    2. *最后更新: YYYY-MM-DD HH:MM* (for USER.md)
+    """
+    text = self._read(path)
+    today = self._today()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    
+    # Try USER.md format first
+    user_pattern = r"\*最后更新: [^\*]+\*"
+    if re.search(user_pattern, text):
+        text = re.sub(user_pattern, f"*最后更新: {now}*", text)
+    else:
+        # Try comment format
+        comment_pattern = r"<!-- updated: \d{4}-\d{2}-\d{2}[^>]* -->"
+        ts = f"<!-- updated: {today} -->"
+        if re.search(comment_pattern, text):
+            text = re.sub(comment_pattern, ts, text, count=1)
+        else:
+            # Insert after first line
+            lines = text.splitlines(keepends=True)
+            if lines:
+                lines.insert(1, ts + "\n")
+                text = "".join(lines)
+    
+    self._write(path, text)
 ```
 
 ### 6. 旧文件迁移
