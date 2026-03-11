@@ -86,3 +86,56 @@ def register(skills_manager):
             f"🚀 成功！插件 `{plugin_name}.py` 已{action_word}并写入 {plugins_dir} 目录。\n"
             f"{reload_result}"
         )
+
+    @skills_manager.skill(
+        name="create_skill",
+        description="【技能引擎】创建符合 Agent Skills 规范的声明式技能（SKILL.md）。相比 create_plugin 创建 Python 代码，此工具用来创建轻量级的工作流指令集、提示词集、特定外挂指南或业务规范。",
+        parameters={
+            "properties": {
+                "skill_name": {
+                    "type": "string",
+                    "description": "技能名称（如 'frontend-design', 'github-automation'），仅限小写字母、数字和连字符"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "简短的一两句话描述，解释该技能的作用和应当何时触发调用"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "SKILL.md 的完整正文内容（包含 Markdown 格式的完整操作步骤、示例等，无需包含 YAML 头部）"
+                }
+            },
+            "required": ["skill_name", "description", "content"]
+        },
+        category="system"
+    )
+    def create_skill(skill_name: str, description: str, content: str) -> str:
+        if not re.match(r"^[a-z0-9\-]+$", skill_name):
+            return "❌ 技能名称不合法，只能包含小写字母、数字和连字符(-)。"
+            
+        # 遵循现有路径逻辑查找基目录
+        try:
+            base_dir = Path(os.environ.get("APP_BASE_DIR", Path(__file__).resolve().parent.parent))
+        except Exception:
+            base_dir = Path.cwd()
+            
+        # 根据 OpenAkita 惯例存放于 .agents/skills 或 skills 目录
+        skills_dir = base_dir / ".agents" / "skills" / skill_name
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        
+        md_path = skills_dir / "SKILL.md"
+        is_update = md_path.exists()
+        
+        # 组装完整的 SKILL.md 内容
+        yaml_frontmatter = f"---\nname: {skill_name}\ndescription: {description}\n---\n\n"
+        full_content = yaml_frontmatter + content
+        
+        try:
+            md_path.write_text(full_content, encoding="utf-8")
+        except Exception as e:
+            return f"❌ 文件写入失败: {e}"
+        
+        action = "更新" if is_update else "创建"
+        return f"✅ 声明式技能 `{skill_name}` {action}成功！文件已存至: {md_path}\n💡 你现在可以通过 `get_skill_info` 自主读取它，下次加载外挂系统时该技能将在全局内有效。"
+
+

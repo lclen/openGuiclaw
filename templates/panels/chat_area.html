@@ -1,12 +1,13 @@
 <!-- ═══════════════ MAIN CHAT AREA ═══════════════ -->
 <div class="flex-1 flex relative bg-transparent overflow-hidden transition-[padding-right] duration-500 cubic-bezier-[0.16,1,0.3,1]"
-    :class="showHistoryPanel ? 'pr-80' : 'pr-0'" x-show="activePanel === 'chat'"
+    :class="showHistoryPanel ? 'pr-80' : 'pr-0'" x-show="['chat', 'im'].includes(activePanel)"
     x-transition:enter="duration-300 ease-out" x-transition:enter-start="opacity-0 translate-y-2"
     x-transition:enter-end="opacity-100 translate-y-0" x-data="{ showHistoryPanel: false }">
 
     <!-- MAIN CHAT COLUMN -->
-    <div class="flex-1 flex flex-col relative min-w-0 transition-[opacity,filter] duration-500 ease-in-out"
-        :class="showHistoryPanel ? 'opacity-90 grayscale-[0.4]' : 'opacity-100 grayscale-0'">
+    <div class="flex-1 flex flex-col relative min-w-0 transition-[opacity,filter] duration-500 ease-in-out cursor-default"
+        @click="if(showHistoryPanel) showHistoryPanel = false"
+        :class="showHistoryPanel ? 'opacity-90 grayscale-[0.4] cursor-pointer' : 'opacity-100 grayscale-0'">
         <!-- Top status bar -->
         <div class="flex items-center justify-between gap-3 px-6 py-4 shrink-0">
             <!-- Left heading -->
@@ -15,7 +16,8 @@
                     <div class="absolute inset-0 bg-[var(--stem-green-500)] rounded-full animate-pulse"
                         x-show="agentOnline"></div>
                 </div>
-                <h2 class="text-[14px] font-bold text-white tracking-wide uppercase">AI终端 (Terminal)</h2>
+                <h2 class="text-[14px] font-bold text-white tracking-wide uppercase"
+                    x-text="activePanel === 'im' ? 'IM 会话记录' : 'AI终端 (Terminal)'"></h2>
             </div>
 
             <!-- Right Actions -->
@@ -30,8 +32,8 @@
                 </div>
 
                 <!-- History Toggle Button -->
-                <button
-                    @click="showHistoryPanel = !showHistoryPanel; if(showHistoryPanel){ $nextTick(() => { document.getElementById('history-panel-container').focus() }) }"
+                <button x-show="activePanel === 'chat'"
+                    @click.stop="showHistoryPanel = !showHistoryPanel; if(showHistoryPanel){ $nextTick(() => { document.getElementById('history-panel-container').focus() }) }"
                     class="w-9 h-9 rounded-xl flex items-center justify-center transition-all border shadow-sm group hover:scale-105 active:scale-95"
                     :class="showHistoryPanel ? 'bg-[var(--stem-green-500)]/10 border-[var(--stem-green-500)]/30 text-[var(--stem-green-500)] shadow-[0_0_15px_rgba(182,240,89,0.15)]' : 'bg-[var(--noble-black-800)]/60 border-white/5 text-[var(--noble-black-400)] hover:text-white hover:bg-[var(--noble-black-700)]'">
                     <svg class="w-4 h-4 transition-transform duration-300" :class="showHistoryPanel ? 'scale-110' : ''"
@@ -55,8 +57,7 @@
         </div>
 
         <div class="flex-1 flex flex-col pb-2 px-6 min-h-0 relative">
-            <div id="chat-container"
-                class="flex-1 flex flex-col gap-5 overflow-y-auto custom-scrollbar pb-6 scroll-smooth pr-2"
+            <div id="chat-container" class="flex-1 flex flex-col gap-5 overflow-y-auto custom-scrollbar pb-6 pr-2"
                 style="scrollbar-gutter: stable;">
 
                 <div x-show="messages.length === 0"
@@ -632,16 +633,20 @@
         <div class="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-2.5">
             <template x-for="s in sessions" :key="s.id">
                 <div class="relative group">
-                    <button @click="loadSession(s.id); showHistoryPanel = false;" :disabled="isReceiving"
-                        class="w-full text-left p-3.5 bg-[var(--noble-black-800)]/40 hover:bg-[var(--noble-black-800)]/80 border border-[var(--noble-black-700)]/50 hover:border-[var(--stem-green-500)]/30 rounded-2xl transition-all disabled:opacity-40 disabled:cursor-not-allowed relative overflow-hidden shadow-inner flex flex-col gap-2">
+                    <button @click="loadSession(s.id, true)" :disabled="isReceiving"
+                        class="w-full text-left p-3.5 bg-[var(--noble-black-800)]/40 hover:bg-[var(--noble-black-800)]/80 border border-[var(--noble-black-700)]/50 hover:border-[var(--stem-green-500)]/30 rounded-2xl transition-all disabled:opacity-40 disabled:cursor-not-allowed relative overflow-hidden shadow-inner flex flex-col gap-2"
+                        :class="{'border-[var(--stem-green-500)]/50 bg-[var(--noble-black-800)]/90 shadow-[0_0_20px_rgba(30,227,137,0.05)]': s.id === currentSessionId}">
 
-                        <div
-                            class="absolute left-0 top-0 bottom-0 w-1 bg-[var(--stem-green-500)] rounded-l-2xl opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div class="absolute left-0 top-0 bottom-0 w-1 bg-[var(--stem-green-500)] rounded-l-2xl transition-all"
+                            :class="s.id === currentSessionId ? 'opacity-100 scale-y-100' : 'opacity-0 scale-y-50 group-hover:opacity-100 group-hover:scale-y-100'">
                         </div>
 
-                        <div class="pr-6">
+                        <div class="pr-6 flex justify-between items-start gap-2">
                             <p class="text-[var(--noble-black-100)] text-[12px] font-bold tracking-tight truncate pl-1"
-                                x-text="s.title"></p>
+                                :class="{'text-[var(--stem-green-400)]': s.id === currentSessionId}" x-text="s.title">
+                            </p>
+                            <span x-show="s.id === currentSessionId"
+                                class="text-[9px] bg-[var(--stem-green-500)]/20 text-[var(--stem-green-400)] px-1.5 py-0.5 rounded-full border border-[var(--stem-green-500)]/30 font-bold shrink-0">CURRENT</span>
                         </div>
                         <div class="flex items-center justify-between pl-1">
                             <p class="text-[var(--noble-black-400)] text-[10px] font-mono font-medium"

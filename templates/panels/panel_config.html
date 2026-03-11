@@ -90,8 +90,13 @@
         </button>
         <button @click="cfgTab = 'identity'"
             :class="cfgTab === 'identity' ? 'text-white border-[var(--stem-green-500)]' : 'text-white/40 border-transparent hover:text-white/70'"
-            class="relative py-3 text-[12px] font-bold uppercase tracking-widest transition-all border-b-2 font-['Outfit']">
+            class="relative py-3 mr-6 text-[12px] font-bold uppercase tracking-widest transition-all border-b-2 font-['Outfit']">
             身份配置
+        </button>
+        <button @click="cfgTab = 'channels'"
+            :class="cfgTab === 'channels' ? 'text-white border-[var(--stem-green-500)]' : 'text-white/40 border-transparent hover:text-white/70'"
+            class="relative py-3 text-[12px] font-bold uppercase tracking-widest transition-all border-b-2 font-['Outfit']">
+            IM 通道
         </button>
     </div>
 
@@ -734,6 +739,158 @@
                         d="M13 10V3L4 14h7v7l9-11h-7z" />
                 </svg>
                 手动唤醒模型推理
+            </button>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════ TAB: IM 通道 (Channels) ══════════════════════════ -->
+    <div x-show="cfgTab === 'channels'" x-transition:enter="transition ease-out duration-200"
+        x-transition:enter-start="opacity-0 translate-y-2"
+        class="flex-1 overflow-y-auto min-h-0 custom-scrollbar px-6 py-6 space-y-6">
+
+        <div class="space-y-1 mb-6">
+            <h3 class="text-[14px] font-bold text-white font-['Outfit'] tracking-wide">即时通讯 (IM) 通道配置</h3>
+            <p class="text-[11px] text-white/40 font-medium">配置 Telegram, 飞书, 钉钉等平台的接入凭证</p>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+
+            <!-- Telegram -->
+            <div class="p-5 bg-white/[0.02] border border-white/5 rounded-xl space-y-4">
+                <div class="flex items-center gap-3 border-b border-white/5 pb-3">
+                    <div class="w-8 h-8 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center">
+                        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                            <path
+                                d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69.01-.03.01-.14-.07-.18-.08-.05-.19-.02-.27 0-.11.03-1.84 1.18-5.22 3.46-.49.34-.94.5-1.35.49-.45-.01-1.32-.26-1.96-.46-.79-.26-1.42-.39-1.36-.83.03-.22.34-.44.93-.68 3.65-1.59 6.08-2.64 7.29-3.14 3.47-1.45 4.19-1.7 4.66-1.71.1 0 .34.02.49.13.13.1.17.24.19.34.01.05.02.16.02.24z" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h4 class="text-[13px] font-bold text-white uppercase tracking-wider font-['Outfit']">Telegram
+                        </h4>
+                        <p class="text-[10px] text-white/40 font-medium">电报机器人接入</p>
+                    </div>
+                </div>
+                <div class="space-y-3">
+                    <div class="space-y-1.5">
+                        <label
+                            class="text-[10px] font-bold text-white/40 uppercase tracking-widest ml-1 font-['Outfit']">Bot
+                            Token</label>
+                        <input type="password" x-model="config.channels.telegram.bot_token"
+                            placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+                            class="config-input w-full h-9 px-3 bg-black/40 border border-white/10 rounded-lg text-blue-400 text-[12px] font-mono tracking-wider focus:border-blue-500/50 focus:outline-none">
+                    </div>
+                    <div class="space-y-1.5">
+                        <label
+                            class="text-[10px] font-bold text-white/40 uppercase tracking-widest ml-1 font-['Outfit']">Proxy
+                            URL (可选)</label>
+                        <input type="text" x-model="config.channels.telegram.proxy" placeholder="http://127.0.0.1:7890"
+                            class="config-input w-full h-9 px-3 bg-black/40 border border-white/10 rounded-lg text-white text-[12px] font-mono focus:border-blue-500/50 focus:outline-none">
+                    </div>
+                    <div class="pt-2 flex justify-end">
+                        <button @click="testChannelConnection('telegram')"
+                            class="px-4 py-1.5 rounded-lg border text-[11px] font-bold text-blue-400 bg-blue-500/10 border-blue-500/20 hover:bg-blue-500 hover:text-white transition-all shadow-sm">
+                            网络测活
+                        </button>
+                    </div>
+                    <div x-show="channelTestResults['telegram']"
+                        :class="channelTestResults['telegram']?.status === 'healthy' ? 'bg-[var(--stem-green-500)]/10 text-[var(--stem-green-500)] border-[var(--stem-green-500)]/30' : 'bg-rose-500/10 text-rose-400 border-rose-500/30'"
+                        class="px-3 py-2 rounded-lg border text-[11px] font-mono mt-2 flex items-center gap-2 transition-all">
+                        <span
+                            x-text="channelTestResults['telegram']?.status === 'healthy' ? '✓ 连接成功' : '✗ ' + channelTestResults['telegram']?.error"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Feishu -->
+            <div class="p-5 bg-white/[0.02] border border-white/5 rounded-xl space-y-4">
+                <div class="flex items-center gap-3 border-b border-white/5 pb-3">
+                    <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                        <span class="font-bold text-lg">飞</span>
+                    </div>
+                    <div>
+                        <h4 class="text-[13px] font-bold text-white uppercase tracking-wider font-['Outfit']">Feishu /
+                            Lark</h4>
+                        <p class="text-[10px] text-white/40 font-medium">飞书自建应用接入</p>
+                    </div>
+                </div>
+                <div class="space-y-3">
+                    <div class="space-y-1.5">
+                        <label
+                            class="text-[10px] font-bold text-white/40 uppercase tracking-widest ml-1 font-['Outfit']">App
+                            ID</label>
+                        <input type="text" x-model="config.channels.feishu.app_id" placeholder="cli_..."
+                            class="config-input w-full h-9 px-3 bg-black/40 border border-white/10 rounded-lg text-white text-[12px] font-mono focus:border-emerald-500/50 focus:outline-none">
+                    </div>
+                    <div class="space-y-1.5">
+                        <label
+                            class="text-[10px] font-bold text-white/40 uppercase tracking-widest ml-1 font-['Outfit']">App
+                            Secret</label>
+                        <input type="password" x-model="config.channels.feishu.app_secret" placeholder="Secret"
+                            class="config-input w-full h-9 px-3 bg-black/40 border border-white/10 rounded-lg text-emerald-400 text-[12px] font-mono tracking-wider focus:border-emerald-500/50 focus:outline-none">
+                    </div>
+                    <div class="pt-2 flex justify-end">
+                        <button @click="testChannelConnection('feishu')"
+                            class="px-4 py-1.5 rounded-lg border text-[11px] font-bold text-emerald-400 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500 hover:text-white transition-all shadow-sm">
+                            网络测活
+                        </button>
+                    </div>
+                    <div x-show="channelTestResults['feishu']"
+                        :class="channelTestResults['feishu']?.status === 'healthy' ? 'bg-[var(--stem-green-500)]/10 text-[var(--stem-green-500)] border-[var(--stem-green-500)]/30' : 'bg-rose-500/10 text-rose-400 border-rose-500/30'"
+                        class="px-3 py-2 rounded-lg border text-[11px] font-mono mt-2 flex items-center gap-2 transition-all">
+                        <span
+                            x-text="channelTestResults['feishu']?.status === 'healthy' ? '✓ 验证成功' : '✗ ' + channelTestResults['feishu']?.error"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- DingTalk -->
+            <div class="p-5 bg-white/[0.02] border border-white/5 rounded-xl space-y-4">
+                <div class="flex items-center gap-3 border-b border-white/5 pb-3">
+                    <div class="w-8 h-8 rounded-lg bg-sky-500/20 text-sky-400 flex items-center justify-center">
+                        <span class="font-bold text-lg leading-none transform -skew-x-12">D</span>
+                    </div>
+                    <div>
+                        <h4 class="text-[13px] font-bold text-white uppercase tracking-wider font-['Outfit']">DingTalk
+                        </h4>
+                        <p class="text-[10px] text-white/40 font-medium">钉钉企业内部机器人接入</p>
+                    </div>
+                </div>
+                <div class="space-y-3">
+                    <div class="space-y-1.5">
+                        <label
+                            class="text-[10px] font-bold text-white/40 uppercase tracking-widest ml-1 font-['Outfit']">Client
+                            ID (AppKey)</label>
+                        <input type="text" x-model="config.channels.dingtalk.client_id" placeholder="ding..."
+                            class="config-input w-full h-9 px-3 bg-black/40 border border-white/10 rounded-lg text-white text-[12px] font-mono focus:border-sky-500/50 focus:outline-none">
+                    </div>
+                    <div class="space-y-1.5">
+                        <label
+                            class="text-[10px] font-bold text-white/40 uppercase tracking-widest ml-1 font-['Outfit']">Client
+                            Secret (AppSecret)</label>
+                        <input type="password" x-model="config.channels.dingtalk.client_secret" placeholder="Secret"
+                            class="config-input w-full h-9 px-3 bg-black/40 border border-white/10 rounded-lg text-sky-400 text-[12px] font-mono tracking-wider focus:border-sky-500/50 focus:outline-none">
+                    </div>
+                    <div class="pt-2 flex justify-end">
+                        <button @click="testChannelConnection('dingtalk')"
+                            class="px-4 py-1.5 rounded-lg border text-[11px] font-bold text-sky-400 bg-sky-500/10 border-sky-500/20 hover:bg-sky-500 hover:text-white transition-all shadow-sm">
+                            网络测活
+                        </button>
+                    </div>
+                    <div x-show="channelTestResults['dingtalk']"
+                        :class="channelTestResults['dingtalk']?.status === 'healthy' ? 'bg-[var(--stem-green-500)]/10 text-[var(--stem-green-500)] border-[var(--stem-green-500)]/30' : 'bg-rose-500/10 text-rose-400 border-rose-500/30'"
+                        class="px-3 py-2 rounded-lg border text-[11px] font-mono mt-2 flex items-center gap-2 transition-all">
+                        <span
+                            x-text="channelTestResults['dingtalk']?.status === 'healthy' ? '✓ 验证成功' : '✗ ' + channelTestResults['dingtalk']?.error"></span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="mt-8 border-t border-white/5 pt-6 flex justify-end">
+            <button @click="saveGlobalConfig()"
+                class="px-6 py-2.5 rounded-xl text-[13px] font-black bg-[var(--stem-green-500)]/10 text-[var(--stem-green-500)] border-[var(--stem-green-500)]/30 hover:bg-[var(--stem-green-500)] hover:text-black transition-all shadow-[-0_0_15px_rgba(182,240,89,0.1)] active:scale-95">
+                保存所有配置
             </button>
         </div>
     </div>

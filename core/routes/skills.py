@@ -149,27 +149,17 @@ async def toggle_skill(request: SkillToggleRequest):
 
 @router.post("/api/skills/reload")
 async def reload_skills():
-    """Reload all skill modules."""
+    """Reload all skill modules (via PluginManager)."""
     agent = _require_agent()
     try:
-        import importlib
-        from skills import basic, autogui, office_tools, web_reader, system_tools, file_manager
-        for mod in [basic, autogui, office_tools, web_reader, system_tools, file_manager]:
-            importlib.reload(mod)
-        agent.skills._registry.clear()
-        if hasattr(agent, "_register_builtins"):
-            agent._register_builtins()
-        if hasattr(agent, "_build_builtin_skills"):
-            agent._build_builtin_skills()
-        for mod in [basic, autogui, office_tools, web_reader, system_tools, file_manager]:
-            agent.register_skill_module(mod)
+        plugin_manager = app_state.get("plugin_manager")
+        if plugin_manager:
+            reloaded = plugin_manager.reload_all()
+            logger.info(f"[SkillReload] Reloaded {len(reloaded)} plugins: {reloaded}")
         if hasattr(agent, "_scan_local_skills"):
             agent._local_skills_catalog = agent._scan_local_skills()
             agent._catalog_dirty = False
-        plugin_manager = app_state.get("plugin_manager")
-        if plugin_manager:
-            plugin_manager.reload_all()
-        return {"status": "success", "message": "Skills reloaded successfully"}
+        return {"status": "success", "message": f"已重载 {len(reloaded) if plugin_manager else 0} 个插件"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to reload skills: {str(e)}")
 

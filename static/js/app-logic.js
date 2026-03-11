@@ -84,13 +84,21 @@
         config: {
             browser_choice: 'edge',
             proactive: { interval_minutes: null, cooldown_minutes: null, verbose: true, mode: 'silent' },
-            journal: { enable_diary: false }
+            journal: { enable_diary: false },
+            channels: {
+                telegram: { bot_token: '', proxy: '' },
+                feishu: { app_id: '', app_secret: '' },
+                dingtalk: { client_id: '', client_secret: '' }
+            }
         },
+        channelTestResults: {},
         proactiveDefaults: {
             silent: { interval_minutes: null, cooldown_minutes: null },
             normal: { interval_minutes: 5, cooldown_minutes: 15 },
             lively: { interval_minutes: 5, cooldown_minutes: 1 }
         },
+        imChannels: [],
+        imSessions: [],
 
         // Scheduler
         schedulerTasks: [],
@@ -755,10 +763,11 @@
                     const r = await fetch('/api/health', { cache: 'no-store' });
                     if (r.ok) {
                         clearInterval(poll);
-                        // 平滑过渡：先更新提示文字，短暂停顿后再 reload
                         const statusDiv = modal?.querySelector?.('div[style*="font-size:11px"]');
-                        if (statusDiv) statusDiv.textContent = '服务就绪，正在加载界面...';
-                        setTimeout(() => window.location.reload(true), 200);
+                        if (statusDiv) statusDiv.textContent = '服务就绪，由于不需要刷新页面所以不需要跳转';
+                        setTimeout(() => {
+                            if (modal) modal.style.display = 'none';
+                        }, 1000);
                     }
                 } catch (e) {
                     // still dead, keep waiting
@@ -782,6 +791,7 @@
                     this._fullConfig = data;
                     this.config.proactive = { ...this.config.proactive, ...(data.proactive || {}) };
                     this.config.journal = { ...this.config.journal, ...(data.journal || {}) };
+                    this.config.channels = { ...this.config.channels, ...(data.channels || {}) };
                     // BUG#2 fix: restore vrm toggle from backend config (fallback to localStorage)
                     if (data.journal && typeof data.journal.vrm_enabled === 'boolean') {
                         this.vrmSystemEnabled = data.journal.vrm_enabled;
@@ -809,6 +819,7 @@
                 }
                 this._fullConfig.proactive = this.config.proactive;
                 this._fullConfig.journal = this.config.journal;
+                this._fullConfig.channels = this.config.channels;
                 const r = await fetch('/api/config', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -822,6 +833,39 @@
                 }
             } catch (e) {
                 this.pushLog('error', '⚠ 保存配置失败: ' + e.message);
+            }
+        },
+
+        async testChannelConnection(channel) {
+            try {
+                this.channelTestResults[channel] = null;
+                const r = await fetch('/api/config/channels/health', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        channel: channel,
+                        // Send the current UI config so they don't have to save first
+                        config: this.config.channels
+                    })
+                });
+
+                if (r.ok) {
+                    const data = await r.json();
+                    if (data.results && data.results.length > 0) {
+                        this.channelTestResults[channel] = data.results[0];
+                    }
+                } else {
+                    const err = await r.json().catch(() => ({}));
+                    this.channelTestResults[channel] = {
+                        status: 'unhealthy',
+                        error: err.detail || r.statusText
+                    };
+                }
+            } catch (e) {
+                this.channelTestResults[channel] = {
+                    status: 'unhealthy',
+                    error: e.message
+                };
             }
         },
 
@@ -874,10 +918,7 @@
                         this.loadCurrentSession().then(() => {
                             this.$nextTick(() => this.scrollToBottom());
                         });
-                        // If not on chat panel, switch to it so user sees the message
-                        if (this.activePanel !== 'chat') {
-                            this.activePanel = 'chat';
-                        }
+                        // Do NOT force switch panel to 'chat' to avoid annoying UI jumps during automated tasks
                     } else if (ev.type === 'scheduler_updated') {
                         this.loadSchedulerTasks();
                     }
@@ -944,6 +985,7 @@
         async switchPanel(panel) {
             this.activePanel = panel;
             if (panel === 'history' && this.sessions.length === 0) this.loadSessions();
+            if (panel === 'im') this.fetchIMData();
             if (panel === 'diary' && this.diaryDates.length === 0) this.loadDiaryDates();
             if (panel === 'persona' && Object.keys(this.personas).length === 0) this.loadPersona();
             if (panel === 'skills' && this.skills.length === 0) this.loadSkills();
@@ -961,6 +1003,25 @@
             try {
                 this.sessions = await (await fetch('/api/sessions')).json();
             } catch { this.sessions = []; }
+        },
+
+        async fetchIMData() {
+            try {
+                const resC = await fetch('/api/im/channels');
+                if (resC.ok) {
+                    const data = await resC.json();
+                    this.imChannels = data.channels || [];
+                }
+                const resS = await fetch('/api/im/sessions');
+                if (resS.ok) {
+                    const data = await resS.json();
+                    this.imSessions = data.sessions || [];
+                }
+            } catch (err) {
+                console.error('Failed to fetch IM data:', err);
+                this.imChannels = [];
+                this.imSessions = [];
+            }
         },
 
         async loadSession(sessionId, keepPanel = false) {
@@ -2005,9 +2066,23 @@
             if (!text || typeof text !== 'string') return text || '';
             if (text.startsWith('<span')) return text;
             try {
+                // 优化：处理 Markdown 中的本地路径图片，转换成前端可访问的静态路由
+                let processedText = text;
+                if (processedText.includes('![')) {
+                    processedText = processedText.replace(/!\[(.*?)\]\(([^)]+)\)/g, (match, alt, path) => {
+                        let cleanPath = path.trim().replace(/\\/g, '/');
+                        // 将 data/screenshots/ 映射到 /screenshots/ (向后兼容旧格式)
+                        if (cleanPath.startsWith('data/screenshots/')) {
+                            cleanPath = cleanPath.replace('data/screenshots/', '/screenshots/');
+                        }
+                        // /screenshots/ 开头的路径直接使用，是服务器已挂载的静态路由
+                        return `![${alt}](${cleanPath})`;
+                    });
+                }
+
                 return typeof marked !== 'undefined'
-                    ? marked.parse(text, { breaks: true, gfm: true })
-                    : text;
+                    ? marked.parse(processedText, { breaks: true, gfm: true })
+                    : processedText;
             } catch { return text; }
         },
 

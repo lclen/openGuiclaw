@@ -213,6 +213,7 @@ async def update_config(request: Request):
             "proactive", "browser_choice", "model", "api_key", "base_url",
             "persona", "memory", "skills", "plugins", "journal", "knowledge_graph",
             "api", "vision", "image_analyzer", "embedding", "autogui", "screen", "agent",
+            "channels", "chat_endpoints", "active_chat_endpoint_id", "vrm",
         }
         if not isinstance(new_config, dict):
             raise HTTPException(status_code=400, detail="Config must be a JSON object")
@@ -515,6 +516,115 @@ async def save_role_endpoints(body: RoleEndpointsWrite):
     full["role_extra_endpoints"][body.role] = clean
     _save_config_json(full, cfg_path)
     return {"status": "ok", "role": body.role, "count": len(clean), "requires_restart": True}
+
+
+# ── IM Channels Health Check ──────────────────────────────────────────────────
+
+class ChannelHealthCheckRequest(BaseModel):
+    channel: str  # telegram, feishu, dingtalk, etc. If empty, check all.
+    config: Optional[dict] = None # Optional override config for testing before saving
+
+@router.post("/api/config/channels/health")
+async def health_check_channels(req: ChannelHealthCheckRequest):
+    import httpx
+    import time
+    
+    # Get effective config
+    full, _ = _load_config_json()
+    channels_cfg = full.get("channels", {})
+    if req.config:
+        channels_cfg.update(req.config)
+        
+    targets = ["telegram", "feishu", "dingtalk"]
+    if req.channel:
+        if req.channel not in targets:
+            raise HTTPException(status_code=400, detail=f"Unknown channel: {req.channel}")
+        targets = [req.channel]
+
+    results = []
+    
+    for ch in targets:
+        ch_cfg = channels_cfg.get(ch, {})
+        
+        # Check required keys based on openakita logic
+        if ch == "telegram":
+            required = ["bot_token"]
+        elif ch == "feishu":
+            required = ["app_id", "app_secret"]
+        elif ch == "dingtalk":
+            required = ["client_id", "client_secret"]
+        else:
+            required = []
+            
+        missing = [k for k in required if not ch_cfg.get(k, "").strip()]
+        if missing:
+            results.append({
+                "channel": ch,
+                "status": "unhealthy",
+                "error": f"缺少必填配置: {', '.join(missing)}",
+                "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S")
+            })
+            continue
+            
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                if ch == "telegram":
+                    token = ch_cfg["bot_token"].strip()
+                    proxy = ch_cfg.get("proxy", "").strip()
+                    transport = None
+                    # Basic proxing handling if provided
+                    if proxy:
+                        proxies = {"http://": proxy, "https://": proxy}
+                        # httpx AsyncClient proxy configuration
+                        # This is a simplified proxy setup just for the healthcheck
+                        resp = await httpx.AsyncClient(proxies=proxies, timeout=15).get(f"https://api.telegram.org/bot{token}/getMe")
+                    else:
+                        resp = await client.get(f"https://api.telegram.org/bot{token}/getMe")
+                    
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if not data.get("ok"):
+                        raise Exception(data.get("description", "Telegram API 返回错误"))
+                        
+                elif ch == "feishu":
+                    app_id = ch_cfg["app_id"].strip()
+                    app_secret = ch_cfg["app_secret"].strip()
+                    resp = await client.post(
+                        "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+                        json={"app_id": app_id, "app_secret": app_secret},
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if data.get("code", -1) != 0:
+                        raise Exception(data.get("msg", "飞书验证失败"))
+                        
+                elif ch == "dingtalk":
+                    client_id = ch_cfg["client_id"].strip()
+                    client_secret = ch_cfg["client_secret"].strip()
+                    resp = await client.post(
+                        "https://api.dingtalk.com/v1.0/oauth2/accessToken",
+                        json={"appKey": client_id, "appSecret": client_secret},
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if not data.get("accessToken"):
+                        raise Exception(data.get("message", "钉钉验证失败"))
+
+            results.append({
+                "channel": ch,
+                "status": "healthy",
+                "error": None,
+                "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S")
+            })
+        except Exception as e:
+            results.append({
+                "channel": ch,
+                "status": "unhealthy",
+                "error": str(e)[:500],
+                "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S")
+            })
+
+    return {"results": results}
 
 
 # ── System control ────────────────────────────────────────────────────────────

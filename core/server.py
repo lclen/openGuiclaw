@@ -56,26 +56,7 @@ async def lifespan(app: FastAPI):
         agent = Agent(config_path=config_path, data_dir=str(_APP_BASE / "data"), auto_evolve=True)
         agent.event_queue = _ctx_event_queue
 
-        # ── Skills ─────────────────────────────────────────────────────────
-        _skill_modules = [
-            ("basic",        "basic (ask_user, get_time, ...)"),
-            ("autogui",      "autogui (autogui_action, screenshot_and_act, ...)"),
-            ("web_search",   "web_search (web_fetch)"),
-            ("web_reader",   "web_reader (web_read)"),
-            ("system_tools", "system_tools (execute_command)"),
-            ("file_manager", "file_manager (read_file, write_file, list_dir, ...)"),
-            ("office_tools", "office_tools (read_docx, create_pptx, ...)"),
-        ]
-        for mod_name, label in _skill_modules:
-            try:
-                import importlib
-                mod = importlib.import_module(f"skills.{mod_name}")
-                agent.register_skill_module(mod)
-                logger.info(f"  [OK] 技能加载: {label}")
-            except Exception as e:
-                logger.warning(f"  [WARN] 技能加载失败 [{mod_name}]: {e}")
-
-        # ── Plugins ────────────────────────────────────────────────────────
+        # ── Plugins (includes all skills, now unified in plugins/) ─────────
         plugin_manager = PluginManager(
             skill_manager=agent.skills,
             plugins_dir=str(_APP_BASE / "plugins"),
@@ -83,6 +64,44 @@ async def lifespan(app: FastAPI):
         plugin_manager.load_all()
         plugin_manager.start_watcher()
         agent.start_background_tasks()
+
+        # ── Channel Gateway ────────────────────────────────────────────────
+        from core.channels.gateway import ChannelGateway
+        gateway = ChannelGateway(agent=agent)
+        
+        channels_cfg = agent.config.get("channels", {})
+        
+        # DingTalk
+        dt_cfg = channels_cfg.get("dingtalk", {})
+        if dt_cfg.get("client_id") and dt_cfg.get("client_secret"):
+            from core.channels.adapters.dingtalk import DingTalkAdapter
+            gateway.register_adapter(DingTalkAdapter(
+                app_key=dt_cfg["client_id"],
+                app_secret=dt_cfg["client_secret"]
+            ))
+            
+        # Feishu
+        fs_cfg = channels_cfg.get("feishu", {})
+        if fs_cfg.get("app_id") and fs_cfg.get("app_secret"):
+            from core.channels.adapters.feishu import FeishuAdapter
+            gateway.register_adapter(FeishuAdapter(
+                app_id=fs_cfg["app_id"],
+                app_secret=fs_cfg["app_secret"],
+                verification_token=fs_cfg.get("verification_token"),
+                encrypt_key=fs_cfg.get("encrypt_key")
+            ))
+            
+        # Telegram
+        tg_cfg = channels_cfg.get("telegram", {})
+        if tg_cfg.get("bot_token"):
+            from core.channels.adapters.telegram import TelegramAdapter
+            gateway.register_adapter(TelegramAdapter(
+                bot_token=tg_cfg["bot_token"],
+                proxy=tg_cfg.get("proxy")
+            ))
+            
+        await gateway.start()
+        app_state["gateway"] = gateway
 
         # ── Vision context manager ─────────────────────────────────────────
         context_manager = ContextManager(
@@ -130,6 +149,8 @@ async def lifespan(app: FastAPI):
         raise
     finally:
         logger.info("Shutting down OpenGuiclaw Server...")
+        if "gateway" in app_state:
+            await app_state["gateway"].stop()
         if "context_manager" in app_state:
             app_state["context_manager"].stop()
         if "task_scheduler" in app_state:
@@ -155,6 +176,25 @@ async def _register_builtin_tasks(scheduler, ScheduledTask, TriggerType, TaskTyp
         logger.info("Registered built-in task: system_daily_selfcheck")
     else:
         task = next(t for t in scheduler.list_tasks() if t.action == "system:daily_selfcheck")
+        if task.deletable:
+            task.deletable = False
+
+    # 自我进化任务：每日凌晨 3 点执行
+    if "system:daily_evolution" not in existing_actions:
+        await scheduler.add_task(ScheduledTask(
+            id="system_daily_evolution",
+            name="自我进化",
+            description="每日凌晨自动回顾对话日志，提取记忆，更新用户画像和人设",
+            trigger_type=TriggerType.CRON,
+            trigger_config={"cron": "0 3 * * *"},
+            task_type=TaskType.SYSTEM,
+            prompt="",
+            action="system:daily_evolution",
+            deletable=False,
+        ))
+        logger.info("Registered built-in task: system_daily_evolution")
+    else:
+        task = next(t for t in scheduler.list_tasks() if t.action == "system:daily_evolution")
         if task.deletable:
             task.deletable = False
             scheduler._save_tasks()
@@ -240,13 +280,14 @@ templates = Jinja2Templates(directory=str(_APP_BASE / "templates"))
 
 # ── Register routers ──────────────────────────────────────────────────────────
 
-from core.routes import chat, memory, skills, agents, vrm, config as config_router
+from core.routes import chat, memory, skills, agents, vrm, im, config as config_router
 
 app.include_router(chat.router)
 app.include_router(memory.router)
 app.include_router(skills.router)
 app.include_router(agents.router)
 app.include_router(vrm.router)
+app.include_router(im.router)
 app.include_router(config_router.router)
 
 

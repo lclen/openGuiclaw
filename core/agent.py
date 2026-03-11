@@ -442,15 +442,38 @@ class Agent:
             # 增加 10 秒初始延迟，避开系统刚启动时的视觉上下文分析等 API 爆发期
             time.sleep(10)
             if self.auto_evolve:
-                # ── 启动：检查过去几天的日志是否需要处理 ──
+                # ── 启动：检查过去几天的日志是否需要处理，通过 Scheduler 注册一次性任务 ──
                 self._startup_evolution()
-                # ── 后台线程：定期跨天进化检查 ──
-                # 注意：_evolution_loop 内部已有 time.sleep(60)，所以直接启动即可
+                # ── 后台线程：定期跨天进化检查（触发 Scheduler 中的每日进化任务）──
                 threading.Thread(
                     target=self._evolution_loop, daemon=True, name="EvolutionLoop"
                 ).start()
         
         threading.Thread(target=_delayed_start, daemon=True, name="DelayedStartup").start()
+
+    def _trigger_scheduler_evolution(self, task_id: str = "system_daily_evolution", target_date: str = None) -> bool:
+        """通过 Scheduler 立即触发进化任务，使其在 UI 中显示为"正在运行"。
+        target_date: 可选，指定要处理的日期（用于补档场景）。
+        """
+        try:
+            from core.state import app_state
+            scheduler = app_state.get("task_scheduler")
+            if scheduler:
+                import asyncio
+                loop = app_state.get("event_loop")
+                if loop and loop.is_running():
+                    # 如果指定了日期，先更新任务的 prompt 字段传递日期信息
+                    if target_date:
+                        task = scheduler.get_task(task_id)
+                        if task:
+                            task.prompt = target_date  # 借用 prompt 字段传递目标日期
+                    asyncio.run_coroutine_threadsafe(
+                        scheduler.trigger_now(task_id), loop
+                    )
+                    return True
+        except Exception as e:
+            logger.warning(f"[Evolution] 无法通过 Scheduler 触发: {e}")
+        return False
 
     def _scan_local_skills(self) -> dict:
         """Scan local directories for SKILL.md and build a catalog."""
@@ -1045,7 +1068,13 @@ class Agent:
         # Base identity / custom prompt override
         if system_prompt_override:
             parts.append(f"# 身份设定\n{system_prompt_override}")
+            # Inject Global Interaction Habits separately when using override
+            self._load_habits()
+            if self.interaction_habits.strip():
+                parts.append(f"# 全局交往习惯与规则 (Interaction Habits)\n{self.interaction_habits}")
         elif hasattr(self, "identity") and self.identity is not None:
+            # identity.build_prompt() already includes USER.md + HABITS.md + scene_memory
+            # so we do NOT inject interaction_habits separately to avoid duplication
             profile_ctx = self.identity.build_prompt()
             if profile_ctx:
                 parts.append(profile_ctx)
@@ -1053,11 +1082,10 @@ class Agent:
             profile_ctx = self.user_profile.build_prompt()
             if profile_ctx:
                 parts.append(profile_ctx)
-
-        # Inject Global Interaction Habits
-        self._load_habits()  # Refresh before building prompt in case it was evolved
-        if self.interaction_habits.strip():
-            parts.append(f"# 全局交往习惯与规则 (Interaction Habits)\n{self.interaction_habits}")
+            # Legacy path: inject habits separately
+            self._load_habits()
+            if self.interaction_habits.strip():
+                parts.append(f"# 全局交往习惯与规则 (Interaction Habits)\n{self.interaction_habits}")
 
         # Dynamic Memory Injection (Top-K related memories based on user query)
         if user_query and self.memory._vector_store:
@@ -2075,20 +2103,19 @@ class Agent:
     def _startup_evolution(self) -> None:
         """
         On startup, check recent days for un-processed journals or chat sessions.
+        If found, trigger via Scheduler so the UI shows "正在运行" status.
+        Falls back to direct execution if Scheduler is not yet available.
         """
         from datetime import datetime, timedelta
         from pathlib import Path
 
         today = datetime.now().strftime("%Y-%m-%d")
+        needs_catchup = False
+
         # Look back up to 7 days
         for days_back in range(1, 8):
             check_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-            
-            # Check if this day was already fully processed.
-            # evolution_done marker is written only after ALL steps complete,
-            # so a mid-run crash won't be mistaken for "already done".
-            # Fall back to diary/consolidation checks for backward compatibility
-            # (older runs that predate the marker file).
+
             evolution_done = self.evolution.is_evolution_done(check_date)
             diary_done = self.diary.has_diary(check_date)
             consolidation_done = (
@@ -2096,19 +2123,23 @@ class Agent:
                 and not self.evolution.daily_consolidator.should_run(check_date)
             )
             if evolution_done or diary_done or consolidation_done:
-                # We assume earlier days were also processed.
                 break
 
             journal_content = self.journal.read_day(check_date)
             has_journal = bool(journal_content and journal_content.strip())
-            
-            if not has_journal and not self._has_conversations(check_date):
-                continue  # No activity on this day
 
-            # Found an un-processed day!
+            if not has_journal and not self._has_conversations(check_date):
+                continue
+
+            # Found an un-processed day — trigger via Scheduler if possible
+            needs_catchup = True
             self._emit_system_event(f"[Startup] 发现 {check_date} 的日志尚未总结，正在执行补档进化...")
-            
-            # 串行处理历史遗留任务，每个日期之间增加间隔，防止 429 报错
+
+            # Try to trigger through Scheduler (shows in UI), passing the specific date
+            if self._trigger_scheduler_evolution(target_date=check_date):
+                break  # Scheduler will handle it; don't run multiple at once
+
+            # Fallback: direct execution (Scheduler not ready yet)
             try:
                 self._summarize_day_conversations(check_date)
                 new_mems = self.evolution.evolve_from_journal(check_date)
@@ -2127,9 +2158,8 @@ class Agent:
             except Exception as e:
                 self._emit_system_event(f"[Startup] {check_date} 补档进化出错: {e}")
             import time
-            time.sleep(5) # 每个补做任务之间休息 5 秒
+            time.sleep(5)
 
-        # Set to today so _check_all_triggers works correctly for future cross-day
         self.last_interaction_date = today
 
     def _check_all_triggers(self) -> None:
@@ -2140,32 +2170,30 @@ class Agent:
             prev_date = self.last_interaction_date
             self._emit_system_event(f"检测到跨天 ({prev_date} -> {current_date})，后台自我进化已启动。")
 
-            def _run_daily_evo(d=prev_date):
-                try:
-                    # Step 1: 汇总昨天所有聊天记录写入 journal
-                    self._summarize_day_conversations(d)
+            # Try to trigger via Scheduler (shows "正在运行" in UI)
+            if not self._trigger_scheduler_evolution():
+                # Fallback: direct thread execution
+                def _run_daily_evo(d=prev_date):
+                    try:
+                        self._summarize_day_conversations(d)
+                        self._emit_system_event(f"[Evolution] 开始后台自我进化：分析 {d} 日志...")
+                        new_mems = self.evolution.evolve_from_journal(d)
+                        research_count = sum(1 for m in new_mems if m.startswith("[探索研究]"))
+                        base_count = len(new_mems) - research_count
+                        if new_mems:
+                            parts = []
+                            if base_count:
+                                parts.append(f"{base_count} 条日志记忆")
+                            if research_count:
+                                parts.append(f"{research_count} 条主动探索知识")
+                            self._emit_system_event(f"[Evolution] 后台进化完成，习得 {' + '.join(parts)}。")
+                        else:
+                            self._emit_system_event(f"[Evolution] 后台进化完成，未发现新知识。")
+                        self.evolution.evolve_persona()
+                    except Exception as e:
+                        self._emit_system_event(f"⚠️ 跨天后台进化出错: {e}")
 
-                    # Step 2: 基于完整 journal (视觉日志 + 聊天总结) 生成 diary + 提取记忆 + 主动探索
-                    self._emit_system_event(f"[Evolution] 开始后台自我进化：分析 {d} 日志...")
-                    new_mems = self.evolution.evolve_from_journal(d)
-                    research_count = sum(1 for m in new_mems if m.startswith("[探索研究]"))
-                    base_count = len(new_mems) - research_count
-                    if new_mems:
-                        parts = []
-                        if base_count:
-                            parts.append(f"{base_count} 条日志记忆")
-                        if research_count:
-                            parts.append(f"{research_count} 条主动探索知识")
-                        self._emit_system_event(f"[Evolution] 后台进化完成，习得 {' + '.join(parts)}。")
-                    else:
-                        self._emit_system_event(f"[Evolution] 后台进化完成，未发现新知识。")
-
-                    # Step 3: 尝试人设微调
-                    self.evolution.evolve_persona()
-                except Exception as e:
-                    self._emit_system_event(f"⚠️ 跨天后台进化出错: {e}")
-
-            threading.Thread(target=_run_daily_evo, daemon=True, name=f"DailyEvo_{prev_date}").start()
+                threading.Thread(target=_run_daily_evo, daemon=True, name=f"DailyEvo_{prev_date}").start()
 
             self.last_interaction_date = current_date
 

@@ -16,18 +16,22 @@
 import threading
 import time
 import traceback
-import io
 import sys
+import logging
 from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 # ── RestrictedPython 导入 ────────────────────────────────────────────
 
 try:
     from RestrictedPython import compile_restricted, safe_globals, safe_builtins
-    from RestrictedPython.Guards import (
-        safe_iter_unpack_sequence,
-        guarded_iter_unpack_sequence,
-    )
+    try:
+        from RestrictedPython.Guards import safe_iter_unpack_sequence
+    except ImportError:
+        # RestrictedPython 8.x renamed safe_iter_unpack_sequence to guarded_iter_unpack_sequence
+        from RestrictedPython.Guards import guarded_iter_unpack_sequence as safe_iter_unpack_sequence
+    
     from RestrictedPython.PrintCollector import PrintCollector
     _RESTRICTED_AVAILABLE = True
 except ImportError:
@@ -180,11 +184,6 @@ class RestrictedSandbox:
             local_globals = dict(self._globals)
             local_globals["_print_"] = PrintCollector
 
-            # Redirect stderr
-            old_stderr = sys.stderr
-            stderr_buf = io.StringIO()
-            sys.stderr = stderr_buf
-
             try:
                 exec(byte_code, local_globals)  # noqa: S102 — intentional restricted exec
                 # Merge any new user-defined names back into persistent globals
@@ -200,11 +199,6 @@ class RestrictedSandbox:
                 result_holder["output"] = collector() if callable(collector) else ""
             except Exception:
                 result_holder["error"] = traceback.format_exc()
-            finally:
-                sys.stderr = old_stderr
-                stderr_out = stderr_buf.getvalue().strip()
-                if stderr_out:
-                    result_holder["error"] = (result_holder["error"] + "\n" + stderr_out).strip()
 
         t = threading.Thread(target=_execute, daemon=True)
         t.start()
@@ -212,6 +206,7 @@ class RestrictedSandbox:
 
         if t.is_alive():
             # Thread is stuck (infinite loop etc.) — reset globals to clean state
+            logger.warning(f"[Sandbox] 执行超时（>{timeout}s），后台线程可能仍被阻塞: {code[:100]}...")
             self._globals = self._make_globals()
             return (
                 f"[ERROR] 执行超时（>{timeout}s），可能存在死循环。"

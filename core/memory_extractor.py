@@ -154,6 +154,7 @@ class MemoryExtractor:
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=500,
                 temperature=0.1,
+                timeout=30.0,
             )
             return response.choices[0].message.content or ""
         except Exception as e:

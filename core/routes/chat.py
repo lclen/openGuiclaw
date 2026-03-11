@@ -194,8 +194,9 @@ async def list_sessions():
     if not os.path.exists(sessions_dir):
         return []
     result = []
+    IM_PREFIXES = ("dingtalk_", "feishu_", "telegram_")
     for fname in sorted(os.listdir(sessions_dir), reverse=True):
-        if not fname.endswith(".json"):
+        if not fname.endswith(".json") or fname.startswith(IM_PREFIXES):
             continue
         fpath = os.path.join(sessions_dir, fname)
         try:
@@ -256,11 +257,15 @@ async def get_current_session():
 @router.get("/api/sessions/{session_id}")
 async def get_session(session_id: str):
     """Return the chat messages of a specific session."""
-    fpath = str(_APP_BASE / "data" / "sessions" / f"{session_id}.json")
-    if not os.path.exists(fpath):
+    agent = app_state.get("agent")
+    if not agent:
+        raise HTTPException(status_code=500, detail="Backend agent is not initialized.")
+        
+    # 同步切换后端的当前会话指针
+    data = agent.sessions.load(session_id)
+    if not data:
         raise HTTPException(status_code=404, detail="Session not found")
-    with open(fpath, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    data = data.to_dict() if hasattr(data, "to_dict") else data
     EXCLUDED_ROLES = {"system"}
     messages = [m for m in data.get("messages", []) if m.get("role") not in EXCLUDED_ROLES]
 

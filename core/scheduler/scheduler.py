@@ -64,6 +64,12 @@ class TaskScheduler:
 
         now = datetime.now()
         for task in self._tasks.values():
+            # Fix "Ghost Running" tasks from a previous process crash
+            if task.status == TaskStatus.RUNNING:
+                logger.info(f"Resetting ghost running task {task.id} to scheduled")
+                task.status = TaskStatus.SCHEDULED
+                self._update_next_run(task)
+
             if task.is_active:
                 if task.next_run is None:
                     # ONCE task with last_run set means it already fired — mark completed

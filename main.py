@@ -85,46 +85,18 @@ def main():
         data_dir="data",
     )
 
-    # Load optional skill modules
-    if load_basic:
-        from skills import basic
-        agent.register_skill_module(basic)
-        print("  [OK] 技能加载: basic (get_time, read_file, write_file, list_dir, ...)")
-
-    if load_autogui:
-        try:
-            from skills import autogui
-            agent.register_skill_module(autogui)
-            print("  [OK] 技能加载: autogui (autogui_action, get_screenshot)")
-        except ImportError as e:
-            print(f"  [WARN] AutoGUI 加载失败（缺少依赖？{e}），已跳过。")
-
-    # Load web fetch skill (web_fetch tool + Qwen built-in search)
-    try:
-        from skills import web_search
-        agent.register_skill_module(web_search)
-        print("  [OK] 技能加载: web_search (web_fetch) + 内置联网搜索已开启")
-    except ImportError as e:
-        print(f"  [WARN] Web 技能加载失败（{e}），已跳过。")
-
-    # Load Orchestrator delegate skill
-    try:
-        from skills import orchestrator_skill
-        agent.register_skill_module(orchestrator_skill)
-        print("  [OK] 技能加载: orchestrator_skill (dispatch_gui_task [OpenAkita 增强])")
-    except ImportError as e:
-        print(f"  [WARN] Orchestrator 技能加载失败（{e}），已跳过。")
-
+    # Auto-load plugins from plugins/ directory (includes all skills)
+    plugin_mgr = PluginManager(agent.skills, plugins_dir="plugins")
+    loaded = plugin_mgr.load_all()
+    if loaded:
+        print(f"  [OK] 已从 plugins/ 加载 {len(loaded)} 个插件/技能: {', '.join(loaded)}")
+    else:
+        print("  （plugins/ 目录没有插件）")
+        
     print(f"\n  Persona: {agent.active_persona_name} ({agent.config.get('persona_name', 'AI 助理')})")
     print(f"  Model  : {agent.model}")
     print(f"  Session: {agent.sessions.current.session_id}\n")
 
-    # Auto-load plugins from plugins/ directory
-    plugin_mgr = PluginManager(agent.skills, plugins_dir="plugins")
-    loaded = plugin_mgr.load_all()
-    if not loaded:
-        print("  （plugins/ 目录没有插件）")
-        
     # Start background threads AFTER all plugins and their modules are fully loaded
     agent.start_background_tasks()
 

@@ -1108,3 +1108,55 @@
 2026-03-07 01:13:00,893 [INFO] Starting backend subsystem on port 8010...
 2026-03-07 01:13:04,209 [INFO] Backend subsystem exited. Restarting shortly...
 2026-03-07 01:13:04,710 [INFO] Starting backend subsystem on port 8010...
+2026-03-07 23:07:54,829 [INFO] === OpenGuiclaw 启动 ===
+2026-03-07 23:07:57,039 [INFO] Starting backend subsystem on port 8010...
+2026-03-07 23:07:57,055 [DEBUG] Importing AvifImagePlugin
+2026-03-07 23:07:57,056 [DEBUG] Importing BlpImagePlugin
+2026-03-07 23:07:57,057 [DEBUG] Importing BmpImagePlugin
+2026-03-07 23:07:57,057 [DEBUG] Importing BufrStubImagePlugin
+2026-03-07 23:07:57,058 [DEBUG] Importing CurImagePlugin
+2026-03-07 23:07:57,058 [DEBUG] Importing DcxImagePlugin
+2026-03-07 23:07:57,059 [DEBUG] Importing DdsImagePlugin
+2026-03-07 23:07:57,060 [DEBUG] Importing EpsImagePlugin
+2026-03-07 23:07:57,061 [DEBUG] Importing FitsImagePlugin
+2026-03-07 23:07:57,062 [DEBUG] Importing FliImagePlugin
+2026-03-07 23:07:57,063 [DEBUG] Importing FpxImagePlugin
+2026-03-07 23:07:57,063 [DEBUG] Image: failed to import FpxImagePlugin: No module named 'olefile'
+2026-03-07 23:07:57,063 [DEBUG] Importing FtexImagePlugin
+2026-03-07 23:07:57,064 [DEBUG] Importing GbrImagePlugin
+2026-03-07 23:07:57,064 [DEBUG] Importing GifImagePlugin
+2026-03-07 23:07:57,064 [DEBUG] Importing GribStubImagePlugin
+2026-03-07 23:07:57,064 [DEBUG] Importing Hdf5StubImagePlugin
+2026-03-07 23:07:57,065 [DEBUG] Importing IcnsImagePlugin
+2026-03-07 23:07:57,066 [DEBUG] Importing IcoImagePlugin
+2026-03-07 23:07:57,066 [DEBUG] Importing ImImagePlugin
+2026-03-07 23:07:57,067 [DEBUG] Importing ImtImagePlugin
+2026-03-07 23:07:57,068 [DEBUG] Importing IptcImagePlugin
+2026-03-07 23:07:57,068 [DEBUG] Importing JpegImagePlugin
+2026-03-07 23:07:57,068 [DEBUG] Importing Jpeg2KImagePlugin
+2026-03-07 23:07:57,068 [DEBUG] Importing McIdasImagePlugin
+2026-03-07 23:07:57,068 [DEBUG] Importing MicImagePlugin
+2026-03-07 23:07:57,069 [DEBUG] Image: failed to import MicImagePlugin: No module named 'olefile'
+2026-03-07 23:07:57,069 [DEBUG] Importing MpegImagePlugin
+2026-03-07 23:07:57,070 [DEBUG] Importing MpoImagePlugin
+2026-03-07 23:07:57,071 [DEBUG] Importing MspImagePlugin
+2026-03-07 23:07:57,071 [DEBUG] Importing PalmImagePlugin
+2026-03-07 23:07:57,072 [DEBUG] Importing PcdImagePlugin
+2026-03-07 23:07:57,072 [DEBUG] Importing PcxImagePlugin
+2026-03-07 23:07:57,072 [DEBUG] Importing PdfImagePlugin
+2026-03-07 23:07:57,075 [DEBUG] Importing PixarImagePlugin
+2026-03-07 23:07:57,076 [DEBUG] Importing PngImagePlugin
+2026-03-07 23:07:57,076 [DEBUG] Importing PpmImagePlugin
+2026-03-07 23:07:57,076 [DEBUG] Importing PsdImagePlugin
+2026-03-07 23:07:57,076 [DEBUG] Importing QoiImagePlugin
+2026-03-07 23:07:57,077 [DEBUG] Importing SgiImagePlugin
+2026-03-07 23:07:57,077 [DEBUG] Importing SpiderImagePlugin
+2026-03-07 23:07:57,078 [DEBUG] Importing SunImagePlugin
+2026-03-07 23:07:57,078 [DEBUG] Importing TgaImagePlugin
+2026-03-07 23:07:57,078 [DEBUG] Importing TiffImagePlugin
+2026-03-07 23:07:57,078 [DEBUG] Importing WebPImagePlugin
+2026-03-07 23:07:57,080 [DEBUG] Importing WmfImagePlugin
+2026-03-07 23:07:57,080 [DEBUG] Importing XbmImagePlugin
+2026-03-07 23:07:57,081 [DEBUG] Importing XpmImagePlugin
+2026-03-07 23:07:57,081 [DEBUG] Importing XVThumbImagePlugin
+2026-03-07 23:07:58,057 [INFO] Successfully applied native dark title bar.

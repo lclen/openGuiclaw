@@ -12,7 +12,7 @@ import logging
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Optional
 
 from core.state import app_state, _APP_BASE, logger
 
@@ -25,9 +25,11 @@ async def execute_system_task(task, push_fn: Callable) -> tuple[bool, str]:
     if action == "system:daily_selfcheck":
         return await _system_daily_selfcheck(push_fn)
     if action == "system:memory_consolidate":
-        return await _system_memory_consolidate(push_fn)
+        return await _system_memory_consolidate(push_fn, task)
     if action == "system:memory_audit":
         return await _system_memory_audit(push_fn)
+    if action == "system:daily_evolution":
+        return await _system_daily_evolution(push_fn, task)
     return False, f"Unknown system action: {action}"
 
 
@@ -92,6 +94,16 @@ async def _system_daily_selfcheck(push_fn: Callable) -> tuple[bool, str]:
         except Exception:
             pass
 
+    # 5. AI log analysis & auto-fix (分层修复 + 验证 + 重试降级)
+    core_errs, tool_errs, records = 0, 0, []
+    if log_errors and ag:
+        try:
+            from core.self_check import SelfChecker
+            checker = SelfChecker(agent=ag)
+            core_errs, tool_errs, records = await checker.analyze_and_fix(push_fn)
+        except Exception as e:
+            logger.error(f"AI self-check failed: {e}")
+
     # Build report
     lines.append(f"\n**Agent 状态**: {'✅ 在线' if agent_ok else '❌ 离线'}")
     lines.append(f"**会话文件**: {session_count} 个")
@@ -105,12 +117,31 @@ async def _system_daily_selfcheck(push_fn: Callable) -> tuple[bool, str]:
         lines.append(f"\n**日志错误** ({sum(log_errors.values())} 条):")
         for mod, cnt in sorted(log_errors.items(), key=lambda x: -x[1])[:5]:
             lines.append(f"  - `{mod}`: {cnt} 次")
+        if records:
+            fixed_count = sum(1 for r in records if r.success)
+            lines.append(
+                f"\n  *AI 诊断*: 核心错误 **{core_errs}** 个 (需人工处理)，"
+                f"能力层错误 **{tool_errs}** 个，"
+                f"自动修复成功 **{fixed_count}** 个"
+            )
     else:
         lines.append("\n**日志错误**: 无")
-    if issues:
-        lines.append("\n**自动修复**:")
+
+    if issues or records:
+        lines.append("\n**自动修复 / 诊断建议**:")
         for issue in issues:
             lines.append(f"  - {issue}")
+        for rec in records:
+            if not rec.can_fix:
+                prefix = "🔴 [需人工处理]"
+            elif rec.success:
+                prefix = "✅ [已自动修复]"
+            else:
+                prefix = "⚠️ [修复失败]"
+            lines.append(f"  - {prefix} `{rec.component}`: {rec.error_pattern}")
+            lines.append(f"    👉 {rec.fix_action}")
+            if rec.verification_result:
+                lines.append(f"    🔍 验证: {rec.verification_result}")
 
     status = (
         "✅ 系统运行正常"
@@ -130,7 +161,7 @@ async def _system_daily_selfcheck(push_fn: Callable) -> tuple[bool, str]:
 
 # ── Memory consolidation ──────────────────────────────────────────────────────
 
-async def _system_memory_consolidate(push_fn: Callable) -> tuple[bool, str]:
+async def _system_memory_consolidate(push_fn: Callable, task: Optional[Any] = None) -> tuple[bool, str]:
     """
     Scan recent sessions and extract new long-term memories via MemoryExtractor.
     Pushes a Markdown summary report to chat.
@@ -139,9 +170,18 @@ async def _system_memory_consolidate(push_fn: Callable) -> tuple[bool, str]:
     if not ag or not hasattr(ag, "memory_extractor") or not hasattr(ag, "memory"):
         return False, "Agent or memory subsystem not ready"
 
-    push_fn({"type": "chat_event", "role": "system", "content": "🧠 [记忆整理] 开始扫描历史会话…"})
+    push_fn({"type": "chat_event", "role": "system", "content": "🧠 [记忆整理] 开始扫描会话历史信息…"})
 
-    cutoff = datetime.now() - timedelta(days=7)
+    # Optimization: Use task.last_run if available to scan only new/modified sessions
+    now = datetime.now()
+    if task and task.last_run:
+        # Buffer of 10 minutes to ensure no overlap loss
+        cutoff = task.last_run - timedelta(minutes=10)
+    else:
+        # Initial run: scan last 7 days
+        cutoff = now - timedelta(days=7)
+
+    logger.info(f"Memory consolidate scan starting (cutoff: {cutoff})")
     session_files = sorted(
         (_APP_BASE / "data" / "sessions").glob("*.json"),
         key=lambda p: p.stat().st_mtime,
@@ -299,4 +339,70 @@ async def _system_memory_audit(push_fn: Callable) -> tuple[bool, str]:
         
     except Exception as e:
         logger.error(f"Memory audit error: {e}", exc_info=True)
+        return False, str(e)
+
+
+# ── Daily evolution ───────────────────────────────────────────────────────────
+
+async def _system_daily_evolution(push_fn: Callable, task=None) -> tuple[bool, str]:
+    """
+    Run daily self-evolution: summarize yesterday's journal, extract memories,
+    update persona. If task.prompt contains a date string (YYYY-MM-DD), use it
+    as the target date (for catchup runs triggered by _startup_evolution).
+    """
+    ag = app_state.get("agent")
+    if not ag:
+        return False, "Agent not ready"
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Check if a specific date was passed via task.prompt (catchup scenario)
+    import re as _re
+    task_prompt = getattr(task, "prompt", "") or ""
+    if _re.match(r"^\d{4}-\d{2}-\d{2}$", task_prompt.strip()):
+        target_date = task_prompt.strip()
+        # Clear the prompt so next scheduled run uses normal logic
+        if task:
+            task.prompt = ""
+    elif ag.evolution.is_evolution_done(yesterday):
+        target_date = today
+    else:
+        target_date = yesterday
+
+    push_fn({"type": "chat_event", "role": "system",
+             "content": f"🌱 [自我进化] 开始处理 {target_date} 的日志…"})
+
+    try:
+        loop = asyncio.get_running_loop()
+
+        # Step 1: summarize conversations for the day
+        await loop.run_in_executor(None, ag._summarize_day_conversations, target_date)
+
+        # Step 2: evolve from journal
+        new_mems = await loop.run_in_executor(
+            None, ag.evolution.evolve_from_journal, target_date
+        )
+
+        # Step 3: evolve persona
+        await loop.run_in_executor(None, ag.evolution.evolve_persona)
+
+        research_count = sum(1 for m in new_mems if m.startswith("[探索研究]"))
+        base_count = len(new_mems) - research_count
+        parts = []
+        if base_count:
+            parts.append(f"{base_count} 条日志记忆")
+        if research_count:
+            parts.append(f"{research_count} 条主动探索知识")
+
+        summary = f"🌱 [自我进化] {target_date} 进化完成，习得 {' + '.join(parts)}。" if parts else \
+                  f"🌱 [自我进化] {target_date} 进化完成，无新记忆。"
+
+        push_fn({"type": "chat_event", "role": "system", "content": summary})
+        logger.info(f"Daily evolution completed for {target_date}: {len(new_mems)} memories")
+        return True, summary
+
+    except Exception as e:
+        logger.error(f"Daily evolution error: {e}", exc_info=True)
+        push_fn({"type": "chat_event", "role": "system", "content": f"⚠️ [自我进化] 出错: {e}"})
         return False, str(e)

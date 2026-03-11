@@ -4,54 +4,78 @@ description: 状态隔离的 Python 沙箱运行环境。与普通的 execute_co
 allowed-tools: None
 ---
 
-# Sandbox REPL 状态沙箱技能手册
+# Python 执行环境指南 (Sandbox & Bridge)
 
-`sandbox_repl` 模块提供了一个**持续存活 (Stateful)**的 Python 子进程。这极大地颠覆了传统 AI 只能单次无状态执行代码的局限。
+为了平衡安全与功能，系统提供了两种 Python 执行环境：**Sandbox REPL (沙箱模式)** 和 **Python Bridge (桥接模式)**。
 
-## 核心特性：状态持久化 (State Persistence)
+---
 
+## 1. Sandbox REPL (沙箱模式)
+
+`sandbox_repl` 提供了一个**持续存活 (Stateful)** 且受限的 Python 环境。
+
+### 核心特性：状态持久化 (State Persistence)
 当你连续两次调用该工具运行代码时，第二次依然可以访问第一次定义的变量！
 
-### 正确范例
-**第一步：**
-```python
-import xarray as xr
-dataset = xr.open_dataset("weather.nc")
-print(f"Loaded variables: {list(dataset.variables)}")
-```
-*(获取了打印输出后，你可以接着下一步，无需重新加载文件或重新导入包)*
+#### 使用场景
+1. **分步调试 (Step-by-step)**：将复杂逻辑拆分为多步执行，中间结果可保留。
+2. **重型库加载**：只需在第一步 `import pandas as pd`，后续步骤即可直接使用 `pd`。
 
-**第二步：**
-```python
-# 'dataset' 和 'xr' 依旧存在于内存中，可直接计算并打印
-mean_temp = dataset["temperature"].mean().item()
-print(f"Mean temperature is {mean_temp}")
-```
-
-### 何时必须要用 Sandbox REPL？
-
-1. **大文件/大模型加载**：如果你的代码需要加载几百MB的数据集或极其耗时的依赖（如 `torch`, `pandas`），请绝对避免使用 `execute_command` 每次重新加载！
-2. **多步调试 (Step-by-step Debugging)**：当你写了一大段复杂逻辑不确定是否成功时，将代码拆成多块，每块执行后返回结果，利用 Sandbox 在上下文不丢失的情况下稳步推进。
-
-## 暴露的 Tool: `run_sandbox_code`
-
-暴露给你的函数名为 `run_sandbox_code`，只接受一个必须参数 `code` (类型:字符串)。
+#### 暴露的 Tool: `run_in_sandbox`
+必须参数: `python_code` (字符串)。可选参数: `sandbox_id` (用于分组状态)。
 
 ```json
 {
-  "action": "run_sandbox_code",
+  "action": "run_in_sandbox",
   "parameters": {
-    "code": "import math\nprint(math.pi)"
+    "python_code": "x = 10\nprint(x * 2)",
+    "sandbox_id": "math_task"
   }
 }
 ```
 
-> [!TIP]
-> **自动包裹机制**：你传入的代码会被自动包裹在 `try...except` 中执行，任何异常（如语法错误、运行时错误）都会被捕获并作为错误堆栈信息返回给你，不会导致沙箱崩溃。
+---
 
-## 重置与恢复机制
+## 2. Python Bridge (桥接模式)
 
-如果因为死循环（Timeout）或系统原因导致子进程异常阻塞，`run_sandbox_code` 在检测到底层进程不再响应或出错时，**会自动重启 `python -i` 进程**。
+`python_bridge` 提供了一个**完全不受限 (Unconstrained)** 的原生 Python 环境。
 
-> [!WARNING]
-> 一旦发生进程重启，之前所有的内存变量和状态都会被清空。系统会在返回的信息中提示您重新导入依赖或初始化变量。
+### 为什么需要桥接模式？
+由于沙箱模式基于 `RestrictedPython`，它严禁文件读写、系统调用。当你需要处理本地文件、调用复杂 C 扩展库（如 OpenCV）或进行大规模 IO 时，必须使用桥接模式。
+
+### 核心特性：全权限与子进程隔离
+1. **无限制导入**：支持所有已安装的第三方库。
+2. **文件系统访问**：可以直接读取、修改、删除本地文件。
+3. **独立进程**：每次执行都是一个全新的 `subprocess`，不保留变量状态。
+
+#### 暴露的 Tool: `execute_python_script`
+必须参数: `script` (完整的 Python 脚本字符串)。
+
+#### 正确范例
+```python
+import os
+import pandas as pd
+
+# 读取本地 CSV 并进行复杂处理
+if os.path.exists("data.csv"):
+    df = pd.read_csv("data.csv")
+    result = df.describe()
+    print(result)
+else:
+    print("找不到文件")
+```
+
+---
+
+## 3. 沙箱 (Sandbox) vs 桥接 (Bridge) 抉择指南
+
+| 特性 | Sandbox REPL (`run_in_sandbox`) | Python Bridge (`execute_python_script`) |
+| :--- | :--- | :--- |
+| **执行机制** | RestrictedPython (AST层劫持) | Subprocess (拉起原生子进程) |
+| **状态持久化**| **支持** (变量跨步保留) | **不支持** (单次运行，环境清理) |
+| **安全性** | **极高** (禁止 I/O 和危险调用) | **普通** (拥有当前用户的全权限) |
+| **常用库支持** | numpy, pandas, json, requests | **所有库** (OpenCV, OS, Subprocess 等) |
+| **最佳用例** | 数据探究、逻辑验证、逐步交互 | **文件处理、系统自动化、重型库调用** |
+
+> [!IMPORTANT]
+> **默认建议**：优先使用 `run_in_sandbox` 进行逻辑运算。当遇到 `ImportError`（模块被禁用）或 `PermissionError`（无法访问文件）时，请主动切换到 `execute_python_script`。
